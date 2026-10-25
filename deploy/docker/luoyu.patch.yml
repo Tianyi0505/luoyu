@@ -5,21 +5,20 @@
 # plugin's own defaults and can be edited by the Settings → Luoyu page.
 #
 # Every key below is optional; omitted keys fall back to the schema defaults in
-# src/config.ts.
+# src/config.ts. Secrets (the OneBot accessToken) live in
+# luoyu.local.patch.yml — a sibling overlay that is never committed.
 
 - id: dsh-luoyu
   config:
     # The bot workspace — mounted from the host at this path by compose.
     workspaceDir: /workspace
     timeZone: Asia/Shanghai
-    # managed = the plugin downloads and runs NapCat itself (needs the QQ
-    # client, which the plugin installs through apt on first start).
-    # external = use a NapCat you run elsewhere; point wsUrl/httpUrl at it.
-    napcatMode: managed
-    autoStart: true
-    # QQ client extracted into the volume by install-qq.sh; persists across
-    # `docker compose down/up` instead of living in the image layer.
-    qqDir: /dsh-home/qq/opt/QQ
+    # The plugin talks to the dedicated NapCat container over the compose
+    # network (see the `napcat` service in docker-compose.yml).
+    napcatMode: external
+    wsUrl: ws://napcat:3001
+    httpUrl: http://napcat:3000
+    autoStart: false
     privateReply: true
     groupReply: balanced
     permissionPreset: danger-full-access

@@ -1,12 +1,17 @@
 name: luoyu
 
-# DeepSeek Harness + the Luoyu QQ plugin (dsh-luoyu) on this machine.
+# Luoyu = the dsh-luoyu plugin + DeepSeek Harness in one container, NapCat
+# (with the Linux QQ client baked into the image) in another. Both share the
+# compose network, so the plugin talks to NapCat over `napcat:3001/3000` and
+# nothing OneBot-related is exposed past the host.
 #
 #   docker compose -f deploy/docker/docker-compose.yml up -d --build
-#   http://localhost:3090  → Harness UI · http://localhost:3090/luoyu → Luoyu
 #
-# Run from the repository root, or pass `--file deploy/docker/docker-compose.yml`.
-# Relative paths below resolve against this file's directory.
+# Published on the host:
+#   3090 → dsh web UI   (login URL with ?token= is in `docker compose logs dsh`)
+#   6099 → NapCat WebUI (scan the QR code here once to log in QQ)
+#
+# Relative paths resolve against this file's directory.
 
 services:
   dsh:
@@ -19,25 +24,30 @@ services:
     image: luoyu/dsh:${LUOYU_IMAGE_TAG:-local}
     container_name: luoyu-dsh
     restart: unless-stopped
+    depends_on:
+      - napcat
     ports:
-      # host:container — the Harness UI is published on 3090.
-      - "${LUOYU_PORT:-3090}:3090"
+      # host:container — Docker forwards host 3090 to the app listening on
+      # 3080 inside the container (entrypoint binds it to the container IP).
+      - "${LUOYU_PORT:-3090}:3080"
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DSH_HOME: /dsh-home
       DSH_WEB_PORT: "3080"
-      DSH_PUBLISHED_PORT: "3090"
+      LUOYU_PORT: ${LUOYU_PORT:-3090}
       LUOYU_WORKSPACE_DIR: /workspace
-      # 0 disables the Xvfb display the QQ client needs.
-      LUOYU_XVFB: ${LUOYU_XVFB:-1}
+      # 0 disables the Xvfb display (only needed for managed NapCat).
+      LUOYU_XVFB: "0"
     volumes:
-      # Harness home: profiles, sessions, chat→session state, managed NapCat.
+      # Harness home: profiles, sessions, chat→session state.
       - luoyu-dsh-home:/dsh-home
       # The bot workspace (persona + memory Markdown) — the luoyu-memory repo.
       - ${LUOYU_WORKSPACE_HOST:-../../workspace}:/workspace
       # Luoyu plugin settings, applied as the Harness home patch layer.
       - ./luoyu.patch.yml:/dsh-home/cordis.patch.yml
+      # Secrets (OneBot token), applied after it; never committed.
+      - ./luoyu.local.patch.yml:/dsh-home/luoyu.local.patch.yml
       # Live plugin code from this checkout: run `npm run build` on the host,
       # then `docker compose ... restart dsh` to load it without rebuilding.
       - ../../lib:/opt/dsh-luoyu/lib:ro
@@ -46,11 +56,27 @@ services:
     shm_size: "1gb"
     healthcheck:
       # 401 is the healthy answer too: the UI wants its ?token= login first.
-      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3090/ | grep -qE '^(200|401)$'"]
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' \"$$(hostname -I | awk '{print $$1}'):3080/\" | grep -qE '^(200|401)$'"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 60s
+
+  napcat:
+    image: ${NAPCAT_IMAGE:-mlikiowa/napcat-docker:v4.18.41}
+    container_name: luoyu-napcat
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      WEBUI_TOKEN: ${NAPCAT_WEBUI_TOKEN:-}
+    ports:
+      # WebUI only — the OneBot ports (3000/3001) stay on the compose network.
+      - "${NAPCAT_WEBUI_PORT:-6099}:6099"
+    volumes:
+      # NapCat config (network servers etc.) — seeded with onebot11.json.
+      - ${NAPCAT_CONFIG_HOST:-../../data/napcat-docker/config}:/app/napcat/config
+      # QQ login state, so re-logging survives container recreation.
+      - ${NAPCAT_QQ_HOST:-../../data/napcat-docker/qq}:/app/.config/QQ
 
 volumes:
   luoyu-dsh-home:

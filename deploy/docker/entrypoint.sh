@@ -5,8 +5,9 @@
 #  1. seed $DSH_HOME once (profile manifest + settings) from the image
 #  2. link the plugin into the profile, so `dsh` resolves it as a bundle layer
 #  3. start Xvfb, because the QQ client NapCat drives is an Electron app
-#  4. forward the loopback-only Harness UI onto the container network
-#  5. exec `dsh --profile web`
+#  4. bind `dsh --profile web` to this container's own IP, so the published
+#     port (`ports: 3090:3080`) reaches it — dsh refuses wildcard binds, and a
+#     loopback bind would not be reachable through the port publish at all
 #
 set -euo pipefail
 
@@ -15,7 +16,6 @@ PLUGIN_DIR=${LUOYU_PLUGIN_DIR:-/opt/dsh-luoyu}
 DSH_HOME=${DSH_HOME:-/dsh-home}
 WORKSPACE=${LUOYU_WORKSPACE_DIR:-/workspace}
 INTERNAL_PORT=${DSH_WEB_PORT:-3080}
-PUBLIC_PORT=${DSH_PUBLISHED_PORT:-3090}
 export DSH_HOME
 
 log() { printf '[luoyu] %s\n' "$*"; }
@@ -61,22 +61,29 @@ if [ "${LUOYU_XVFB:-1}" != "0" ]; then
   export DISPLAY=:99
 fi
 
-# --- 5. publish the loopback-only UI ---------------------------------------
-# `dsh web` refuses --host 0.0.0.0 on purpose (the GUI can run code). Keep it
-# on loopback and forward the published port to it.
-if [ "$INTERNAL_PORT" != "$PUBLIC_PORT" ]; then
-  socat "TCP-LISTEN:${PUBLIC_PORT},fork,reuseaddr,bind=0.0.0.0" \
-        "TCP:127.0.0.1:${INTERNAL_PORT}" &
-  log "forwarding 0.0.0.0:${PUBLIC_PORT} -> 127.0.0.1:${INTERNAL_PORT}"
+# --- 5. bind to the container's own interface -------------------------------
+# Docker's `ports: 3090:3080` forwards to <container-ip>:3080, so the app has
+# to listen there. dsh allows one concrete local address and rejects the
+# wildcard ones on purpose; the published host port stays the only door in.
+BIND_HOST=${DSH_BIND_HOST:-$(hostname -I | awk '{print $1}')}
+if [ -z "$BIND_HOST" ]; then
+  log "error: cannot detect this container's IP address"; exit 1
 fi
 
-# --- 6. boot the Harness ----------------------------------------------------
-args=(--profile web --host 127.0.0.1 --port "$INTERNAL_PORT" --no-open
-      --public-url "http://localhost:${PUBLIC_PORT}")
-for authority in "localhost:${PUBLIC_PORT}" "127.0.0.1:${PUBLIC_PORT}" ${DSH_EXTRA_TRUSTED_HOSTS:-}; do
+args=(--profile web
+      --host "$BIND_HOST" --port "$INTERNAL_PORT" --no-open
+      --public-url "http://localhost:${LUOYU_PORT:-3090}")
+# Launcher flags that are not web-app flags must come before the first
+# app-only one: after `--host`, dsh passes the rest of the line to the app.
+# (--patch is a launcher flag; keep it ahead of the app flags below.)
+patch_args=()
+if [ -f /dsh-home/luoyu.local.patch.yml ]; then
+  patch_args=(--patch /dsh-home/luoyu.local.patch.yml)
+fi
+for authority in "localhost:${LUOYU_PORT:-3090}" "127.0.0.1:${LUOYU_PORT:-3090}" ${DSH_EXTRA_TRUSTED_HOSTS:-}; do
   args+=(--trusted-host "$authority")
 done
 
-log "workspace=${WORKSPACE} home=${DSH_HOME} ui=http://localhost:${PUBLIC_PORT}"
+log "workspace=${WORKSPACE} home=${DSH_HOME} ui=http://localhost:${LUOYU_PORT:-3090} (container ${BIND_HOST}:${INTERNAL_PORT})"
 log "the browser-trust login URL (with ?token=…) is printed below and in \`docker compose logs dsh\`"
-exec dsh "${args[@]}"
+exec dsh "${patch_args[@]}" "${args[@]}"

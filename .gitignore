@@ -33,3 +33,6 @@ Thumbs.db
 
 # Host clone of the luoyu-memory workspace repo (mounted as /workspace)
 /workspace/
+
+# Luoyu OneBot token overlay (mounted into the container, not committed)
+deploy/docker/luoyu.local.patch.yml

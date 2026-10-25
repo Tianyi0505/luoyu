@@ -40,9 +40,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Shanghai \
     LANG=C.UTF-8
 
-# socat publishes the loopback-only Harness UI on the container network;
-# Xvfb + the Electron libraries are what the QQ client needs in managed mode;
 # unzip is used by the NapCat installer, sudo + apt by the QQ installer.
+# The entrypoint binds `dsh web` to the container's own IP so the published
+# port reaches it; dsh itself refuses wildcard binds.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -50,6 +50,7 @@ RUN apt-get update \
         dbus-x11 \
         fonts-noto-cjk \
         git \
+        libasound2 \
         libasound2 \
         libatk-bridge2.0-0 \
         libatk1.0-0 \
@@ -70,7 +71,6 @@ RUN apt-get update \
         libxshmfence1 \
         libxss1 \
         libxtst6 \
-        socat \
         sudo \
         tini \
         unzip \
@@ -101,16 +101,15 @@ RUN dsh plugin --profile web add /opt/dsh-luoyu
 COPY deploy/docker/settings.yaml /opt/dsh-home-seed/settings.yaml
 
 ENV DSH_HOME=/dsh-home \
-    DSH_WEB_PORT=3080 \
-    DSH_PUBLISHED_PORT=3090
+    DSH_WEB_PORT=3080
 
 COPY deploy/docker/entrypoint.sh /usr/local/bin/luoyu-entrypoint
 RUN chmod 0755 /usr/local/bin/luoyu-entrypoint
 
 WORKDIR /workspace
-EXPOSE 3090
+EXPOSE 3080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD sh -c "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3090/ | grep -qE '^(200|401)$'"
+    CMD sh -c "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3080/ | grep -qE '^(200|401)$'"
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/luoyu-entrypoint"]
