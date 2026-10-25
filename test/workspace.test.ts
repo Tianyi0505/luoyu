@@ -14,14 +14,16 @@ import {
   INSTRUCTION_FILE,
   MEMORY_DIR,
   MEMORY_FILES,
-  PERSONA_FILE,
+  PERSONA_HEADING,
   instructionBody,
   memoryBody,
   memoryPath,
-  personaBody,
   personaText,
   readPersona,
+  replaceSection,
   scaffoldWorkspace,
+  sectionText,
+  writePersona,
 } from '../src/workspace.ts'
 
 const silent: PluginLogger = {
@@ -41,16 +43,15 @@ async function withTempDir(body: (dir: string) => Promise<void>): Promise<void> 
   }
 }
 
-test('creates the instruction file, the persona, and every memory file', async () => {
+test('creates the instruction file and every memory file', async () => {
   await withTempDir(async dir => {
     const result = await scaffoldWorkspace(dir, 'You are Ada.', silent)
-    assert.equal(result.created.length, 2 + MEMORY_FILES.length)
+    assert.equal(result.created.length, 1 + MEMORY_FILES.length)
     assert.deepEqual(result.kept, [])
 
     const instruction = await readFile(join(dir, INSTRUCTION_FILE), 'utf8')
-    assert.match(instruction, /long-term memory/)
-    const persona = await readFile(join(dir, PERSONA_FILE), 'utf8')
-    assert.match(persona, /You are Ada\./)
+    assert.match(instruction, /长期记忆/)
+    assert.match(personaText(instruction), /You are Ada\./)
     for (const name of MEMORY_FILES) {
       const body = await readFile(memoryPath(dir, name), 'utf8')
       assert.ok(body.length > 0)
@@ -61,7 +62,7 @@ test('creates the instruction file, the persona, and every memory file', async (
 test('keeps a file that the operator already edited', async () => {
   await withTempDir(async dir => {
     await scaffoldWorkspace(dir, 'You are Ada.', silent)
-    const path = join(dir, PERSONA_FILE)
+    const path = join(dir, INSTRUCTION_FILE)
     await writeFile(path, '# Mine\n', 'utf8')
     const result = await scaffoldWorkspace(dir, 'You are Ada.', silent)
     assert.ok(result.kept.includes(path))
@@ -72,8 +73,7 @@ test('keeps a file that the operator already edited', async () => {
 test('reads the persona back', async () => {
   await withTempDir(async dir => {
     await scaffoldWorkspace(dir, 'You are Ada.', silent)
-    const persona = await readPersona(dir)
-    assert.match(persona, /You are Ada\./)
+    assert.match(await readPersona(dir), /You are Ada\./)
   })
 })
 
@@ -83,20 +83,60 @@ test('returns the empty persona when the file is absent', async () => {
   })
 })
 
-test('the instruction file names every memory file', () => {
-  const body = instructionBody()
+test('the instruction file names every memory file and the per-person layout', () => {
+  const body = instructionBody('You are Ada.')
   for (const name of MEMORY_FILES) assert.ok(body.includes(name), `the instruction file must name ${name}`)
   assert.ok(body.includes(MEMORY_DIR))
-  assert.ok(body.includes(PERSONA_FILE))
+  assert.ok(body.includes('<QQ号>.md'), 'the instruction file must explain one file per person')
+  assert.ok(body.includes(PERSONA_HEADING))
+  assert.ok(body.includes('你对自己的了解'))
+  assert.ok(!body.includes('open-threads'), 'open threads are gone')
+  assert.ok(!body.includes('people.md'), 'the people ledger is gone')
 })
 
-test('the persona body repeats the configured text', () => {
-  assert.match(personaBody('  You are Ada.  '), /You are Ada\./)
+test('the persona section carries the configured text', () => {
+  const body = instructionBody('  You are Ada.  ')
+  assert.equal(personaText(body), 'You are Ada.')
 })
 
-test('reads only the editable persona from the Markdown file', () => {
-  assert.equal(personaText(personaBody('You are Ada.')), 'You are Ada.')
-  assert.equal(personaText('# Persona\n\nYou are Robin.'), 'You are Robin.')
+test('slices and replaces one section without touching the others', () => {
+  const body = instructionBody('You are Ada.')
+  assert.match(sectionText(body, '你对自己的了解'), /名字与身份/)
+  const edited = replaceSection(body, PERSONA_HEADING, 'You are Robin.')
+  assert.equal(personaText(edited), 'You are Robin.')
+  assert.match(sectionText(edited, '你对自己的了解'), /名字与身份/)
+  assert.match(edited, /回复风格/)
+})
+
+test('writePersona replaces only the persona section', async () => {
+  await withTempDir(async dir => {
+    await scaffoldWorkspace(dir, 'You are Ada.', silent)
+    const previous = await writePersona(dir, 'You are Robin.')
+    assert.ok(previous !== undefined)
+    const body = await readFile(join(dir, INSTRUCTION_FILE), 'utf8')
+    assert.equal(personaText(body), 'You are Robin.')
+    assert.match(body, /名字与身份/)
+  })
+})
+
+test('writePersona appends the section when the file has none', async () => {
+  await withTempDir(async dir => {
+    const path = join(dir, INSTRUCTION_FILE)
+    await writeFile(path, '# 手写的文件\n\n内容。\n', 'utf8')
+    await writePersona(dir, 'You are Robin.')
+    const body = await readFile(path, 'utf8')
+    assert.match(body, /手写的文件/)
+    assert.equal(personaText(body), 'You are Robin.')
+  })
+})
+
+test('writePersona creates the whole file when it is absent', async () => {
+  await withTempDir(async dir => {
+    assert.equal(await writePersona(dir, 'You are Robin.'), undefined)
+    const body = await readFile(join(dir, INSTRUCTION_FILE), 'utf8')
+    assert.equal(personaText(body), 'You are Robin.')
+    assert.match(body, /长期记忆/)
+  })
 })
 
 test('each memory file has its own body', () => {

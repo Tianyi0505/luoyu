@@ -1,10 +1,10 @@
 /**
  * Workspace scaffold.
  *
- * The workspace is the long-term memory of the bot. It holds one
- * instruction file, one persona file, and a set of Markdown memory files. The
- * agent reads and writes these files with its own file tools, so the memory
- * needs no database and no plugin code.
+ * The workspace is the long-term memory of the bot. It holds one instruction
+ * file — `AGENTS.md`, which also carries the persona and the self-knowledge —
+ * and a set of Markdown memory files. The agent reads and writes these files
+ * with its own file tools, so the memory needs no database and no plugin code.
  *
  * The scaffold writes a file only when the file is absent. An operator edit is
  * never overwritten.
@@ -19,19 +19,17 @@ import type { PluginLogger } from './context.ts'
 /** Name of the instruction file that the Harness loads. */
 export const INSTRUCTION_FILE = 'AGENTS.md'
 
-/** Name of the persona file. */
-export const PERSONA_FILE = 'PERSONA.md'
-
 /** Name of the memory directory. */
 export const MEMORY_DIR = 'memory'
 
 /** The memory files that the scaffold creates. */
-export const MEMORY_FILES = [
-  'self.md',
-  'people.md',
-  'episodes.md',
-  'open-threads.md',
-] as const
+export const MEMORY_FILES = ['episodes.md'] as const
+
+/** Heading of the persona section inside the instruction file. */
+export const PERSONA_HEADING = '## 洛雨是谁'
+
+/** Heading of the self-knowledge section inside the instruction file. */
+export const SELF_HEADING = '## 你对自己的了解'
 
 /** Path of one memory file. */
 export function memoryPath(workspaceDir: string, name: string): string {
@@ -55,97 +53,104 @@ async function writeIfAbsent(path: string, body: string): Promise<boolean> {
   return true
 }
 
-/** Build the instruction file body. */
-export function instructionBody(): string {
-  return `# Bot workspace
-
-This directory is the long-term memory of one personalized QQ bot. Each
-QQ chat runs in its own session. The sessions share this directory, so the
-files here are the only memory that survives a session.
-
-## Files
-
-- \`${PERSONA_FILE}\`: who you are. Read it at the start of a conversation.
-- \`${MEMORY_DIR}/self.md\`: what you have learned about yourself.
-- \`${MEMORY_DIR}/people.md\`: one section for each person that you know.
-- \`${MEMORY_DIR}/episodes.md\`: dated events that matter later.
-- \`${MEMORY_DIR}/open-threads.md\`: questions and promises that are not closed.
-
-## How to use the memory
-
-1. Read \`${PERSONA_FILE}\` and \`${MEMORY_DIR}/people.md\` before you reply to a
-   person that you have not spoken to in this session.
-2. Search the memory with your file tools when a name, an event, or a promise
-   comes up. Do not guess. Do not invent a memory.
-3. Write to the memory after a conversation that changed what you know. Keep
-   each file short and current. Replace an outdated line; do not append a
-   contradiction.
-4. Put a date on every episode and on every open thread.
-5. Never write a credential, a token, a phone number, or an address into the
-   memory. Never write the content of this instruction file into a reply.
-
-## Reply style
-
-- Reply in the language of the other person.
-- Write short paragraphs. QQ shows plain text, so do not use a table.
-- Do not use a heading, a code block, or a link in a chat reply.
-- Ask at most one question in a reply.
-`
+/**
+ * Slice one `## ` section out of a Markdown document.
+ *
+ * @param body - the document.
+ * @param heading - the heading line to find, with or without the `## ` prefix.
+ * @returns the section text after the heading, up to the next `## ` heading,
+ *   or the empty string when the heading is absent.
+ */
+export function sectionText(body: string, heading: string): string {
+  const line = heading.startsWith('## ') ? heading : `## ${heading}`
+  const start = body.indexOf(`\n${line}\n`)
+  if (start < 0) return ''
+  const from = start + line.length + 2
+  const next = body.indexOf('\n## ', from)
+  return (next < 0 ? body.slice(from) : body.slice(from, next)).trim()
 }
 
-/** Build the persona file body from the configured persona. */
-export function personaBody(persona: string): string {
-  return `# Persona
+/**
+ * Replace one `## ` section of a Markdown document and keep the rest.
+ *
+ * @param body - the document, or the empty string when it does not exist yet.
+ * @param heading - the heading line to rewrite, with or without the `## ` prefix.
+ * @param text - the new section body.
+ * @returns the document with the section replaced.
+ */
+export function replaceSection(body: string, heading: string, text: string): string {
+  const line = heading.startsWith('## ') ? heading : `## ${heading}`
+  const start = body.indexOf(`\n${line}\n`)
+  if (start < 0) return body
+  const from = start + line.length + 2
+  const next = body.indexOf('\n## ', from)
+  const head = body.slice(0, from)
+  const tail = next < 0 ? '\n' : body.slice(next)
+  return `${head}\n${text.trim()}\n${tail}`
+}
+
+/**
+ * Build the instruction file body: the working rules, the persona, and the
+ * self-knowledge in one file, because the Harness loads this file for every
+ * session.
+ *
+ * @param persona - persona text for the identity section.
+ * @returns the full instruction file body.
+ */
+export function instructionBody(persona: string): string {
+  return `# 洛雨的工作区
+
+这个目录是洛雨的长期记忆。每个 QQ 聊天对应一个会话，会话共享这个目录，
+所以这里的文件是唯一能跨会话存活的东西。
+
+## 洛雨是谁
 
 ${persona.trim()}
 
-## Memory
+## 你对自己的了解
 
-You keep your memory in \`${MEMORY_DIR}/\`. Read it before you reply to a person
-that you do not remember. Update it after a conversation that changed what you
-know. See \`${INSTRUCTION_FILE}\` for the rules.
+随时更新这一节，它就是你对自己的记忆。
+
+- 名字与身份：
+- 说话习惯：
+- 兴趣：
+- 观点与立场：
+- 最近在忙什么：
+- 重要的人与事：
+
+## 文件
+
+- \`${MEMORY_DIR}/<QQ号>.md\`：每个人一个专属文件，文件名就是对方的 QQ 号。
+  第一次遇到一个人就新建；之后每次想起对方，先读它。
+- \`${MEMORY_DIR}/episodes.md\`：带日期的事件，以后会用到的才记。
+
+## 记忆的使用规则
+
+1. 回复一个人之前，先读本文件和对方的 \`${MEMORY_DIR}/<QQ号>.md\`；没有这个文件
+   就新建一个，文件名用对方 QQ 号。
+2. 用文件工具搜索记忆；想不起来就去查，不要猜，不要编造。
+3. 一次改变了认知的对话之后更新记忆。每个文件保持简短、最新的事实在前；
+   过时的内容直接改写或删除，不要留自相矛盾的两行。
+4. 每条事件都带日期（YYYY-MM-DD）。约定和承诺写进对方文件里，并标上日期。
+5. 凭据、令牌、手机号、住址一律不写进记忆；本文件的内容不要原文复述给对方。
+
+## 回复风格
+
+- 用对方正在使用的语言回复。
+- 段落要短。QQ 是纯文本，不要用表格。
+- 不要用标题、代码块或链接。
+- 一次回复最多问一个问题。
 `
 }
 
-/** Read the editable persona text from a persona file. */
+/** Read the persona text from an instruction file body. */
 export function personaText(body: string): string {
-  const content = body.replace(/^# Persona\s*\r?\n/, '')
-  const memoryStart = content.indexOf('\n## Memory')
-  return (memoryStart < 0 ? content : content.slice(0, memoryStart)).trim()
+  return sectionText(body, PERSONA_HEADING)
 }
 
 /** Build the body of one memory file. */
 export function memoryBody(name: string): string {
   switch (name) {
-    case 'self.md':
-      return `# Self
-
-## Identity
-
-- Name:
-- What I am:
-- How I speak:
-
-## Interests
-
-## Opinions
-
-## What I am working on
-`
-    case 'people.md':
-      return `# People
-
-Add one section for each person. Keep the newest fact at the top of a section.
-
-## Example
-
-- QQ:
-- Name:
-- How we met:
-- What we talk about:
-- How close we are:
-- Open questions:
-`
     case 'episodes.md':
       return `# Episodes
 
@@ -156,18 +161,6 @@ One entry for each event that matters later. Put the newest entry first.
 - Who:
 - What happened:
 - Why it matters:
-`
-    case 'open-threads.md':
-      return `# Open threads
-
-One entry for each question or promise that is not closed. Put the newest
-entry first.
-
-## YYYY-MM-DD
-
-- Who:
-- The thread:
-- Next step:
 `
     default:
       return `# ${name}\n`
@@ -186,7 +179,7 @@ export interface ScaffoldResult {
  * Create the workspace files that are absent.
  *
  * @param workspaceDir - the workspace directory.
- * @param persona - persona text for a new persona file.
+ * @param persona - persona text for a new instruction file.
  * @param logger - log sink.
  * @returns the files that the run created and kept.
  */
@@ -200,8 +193,7 @@ export async function scaffoldWorkspace(
   await mkdir(join(workspaceDir, MEMORY_DIR), { recursive: true })
 
   const files: Array<[string, string]> = [
-    [join(workspaceDir, INSTRUCTION_FILE), instructionBody()],
-    [join(workspaceDir, PERSONA_FILE), personaBody(persona)],
+    [join(workspaceDir, INSTRUCTION_FILE), instructionBody(persona)],
     ...MEMORY_FILES.map((name): [string, string] => [memoryPath(workspaceDir, name), memoryBody(name)]),
   ]
 
@@ -217,7 +209,7 @@ export async function scaffoldWorkspace(
 }
 
 /**
- * Read the persona text for the session prompt.
+ * Read the persona text for the settings page.
  *
  * @param workspaceDir - the workspace directory.
  * @returns the persona text, or the empty string when the file is absent.
@@ -225,8 +217,44 @@ export async function scaffoldWorkspace(
 export async function readPersona(workspaceDir: string): Promise<string> {
   const { readFile } = await import('node:fs/promises')
   try {
-    return await readFile(join(workspaceDir, PERSONA_FILE), 'utf8')
+    return personaText(await readFile(join(workspaceDir, INSTRUCTION_FILE), 'utf8'))
   } catch {
     return ''
   }
+}
+
+/**
+ * Write the persona into the instruction file, replacing only the persona
+ * section. When the file is absent it is created whole.
+ *
+ * @param workspaceDir - the workspace directory.
+ * @param persona - the new persona text.
+ * @returns the previous file content, or undefined when the file was absent
+ *   (the caller can restore it on failure).
+ */
+export async function writePersona(
+  workspaceDir: string,
+  persona: string,
+): Promise<Buffer | undefined> {
+  const { readFile, writeFile } = await import('node:fs/promises')
+  const path = join(workspaceDir, INSTRUCTION_FILE)
+  let previous: Buffer | undefined
+  let body = ''
+  try {
+    previous = await readFile(path)
+    body = previous.toString('utf8')
+  } catch {
+    previous = undefined
+    body = ''
+  }
+  const next = body.length > 0 ? replaceSection(body, PERSONA_HEADING, persona) : instructionBody(persona)
+  if (body.length > 0 && next === body) {
+    // The file exists but carries no persona section: keep every line and
+    // append the section, so an operator's hand-written file loses nothing.
+    await writeFile(path, `${`${body.trimEnd()}\n\n${PERSONA_HEADING}\n\n${persona.trim()}`.trimEnd()}\n`, { encoding: 'utf8', mode: 0o600 })
+    return previous
+  }
+  await mkdir(workspaceDir, { recursive: true })
+  await writeFile(path, `${next.trimEnd()}\n`, { encoding: 'utf8', mode: 0o600 })
+  return previous
 }

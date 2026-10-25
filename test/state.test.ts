@@ -91,7 +91,7 @@ test('starts new chat sessions when the configured workspace changes', async () 
   })
 })
 
-test('writes the state file with owner-only permissions', async () => {
+test('writes the state file with owner-only permissions', { skip: process.platform === 'win32' }, async () => {
   await withTempDir(async dir => {
     await saveState(dir, emptyState())
     const { stat } = await import('node:fs/promises')

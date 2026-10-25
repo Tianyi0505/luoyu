@@ -17,7 +17,7 @@ import test from 'node:test'
 import type { PluginContext, PluginLogger, WebRequest, WebResponse, WebRoute, WebServerService } from '../src/context.ts'
 import { ROUTE_PREFIX, findWebServer, readBody, registerRoutes } from '../src/web.ts'
 import { resolveConfig } from '../src/config.ts'
-import { personaBody } from '../src/workspace.ts'
+import { instructionBody } from '../src/workspace.ts'
 import type { ChatBridge } from '../src/bridge.ts'
 import type { NapCatSidecar, SidecarStatus } from '../src/napcat.ts'
 
@@ -224,7 +224,7 @@ test('rejects the old every-message group mode in Settings', async () => {
 test('returns the persona text stored in the workspace file', async () => {
   const workspaceDir = await mkdtemp(join(tmpdir(), 'dsh-luoyu-settings-read-'))
   const current = resolveConfig({ ...config, workspaceDir, persona: 'Profile default.' })
-  await writeFile(join(workspaceDir, 'PERSONA.md'), personaBody('Edited in the workspace.'), 'utf8')
+  await writeFile(join(workspaceDir, 'AGENTS.md'), instructionBody('Edited in the workspace.'), 'utf8')
   const ctx = { logger: silent, get: () => undefined } as unknown as PluginContext
   const server = new FakeWebServer()
   registerRoutes(ctx, server, sidecarOf(statusOf()), bridgeOf(), workspaceDir, current.uin, () => true, silent, current)
@@ -263,7 +263,9 @@ test('persists settings through the profile editor and updates the persona file'
     assert.equal(saved?.persona, 'A new persona.')
     assert.equal(saved?.privateReply, false)
     assert.equal(saved?.groupReply, 'balanced')
-    assert.match(await readFile(join(workspaceDir, 'PERSONA.md'), 'utf8'), /A new persona\./)
+    const agents = await readFile(join(workspaceDir, 'AGENTS.md'), 'utf8')
+    assert.match(agents, /A new persona\./)
+    assert.match(agents, /洛雨是谁/)
   } finally {
     await rm(workspaceDir, { recursive: true, force: true })
   }

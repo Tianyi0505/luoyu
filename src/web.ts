@@ -9,12 +9,12 @@
  */
 
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import type { ConfigEditorService, ConfigEntryLike, PluginContext, PluginLogger, WebRequest, WebResponse, WebServerService } from './context.ts'
 import type { Config } from './config.ts'
 import { resolveConfig } from './config.ts'
 import { normalizeGroupReplyMode } from './group-rate.ts'
-import { PERSONA_FILE, personaBody, personaText } from './workspace.ts'
+import { INSTRUCTION_FILE, personaText, writePersona } from './workspace.ts'
 import { optionalService } from './context.ts'
 import type { NapCatSidecar, SidecarStatus } from './napcat.ts'
 import type { ChatBridge } from './bridge.ts'
@@ -270,10 +270,11 @@ export function registerRoutes(
         if (request.method !== 'POST') {
           let persona = config.persona
           try {
-            persona = personaText(await readFile(join(config.workspaceDir, PERSONA_FILE), 'utf8'))
+            const fromWorkspace = personaText(await readFile(join(config.workspaceDir, INSTRUCTION_FILE), 'utf8'))
+            if (fromWorkspace.length > 0) persona = fromWorkspace
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-              logger.warn(`dsh-luoyu: cannot read the persona file: ${(error as Error).message}`)
+              logger.warn(`dsh-luoyu: cannot read the instruction file: ${(error as Error).message}`)
             }
           }
           sendJson(response, 200, {
@@ -341,25 +342,24 @@ export function registerRoutes(
         }
 
         const next = resolveConfig({ ...config, ...patch })
-        let personaPath: string | undefined
-        let oldPersona: Buffer | undefined
-        let hadPersona = false
+        let instructionPath: string | undefined
+        let oldInstruction: Buffer | undefined
+        let hadInstruction = false
         if (patch.persona !== undefined) {
-          personaPath = join(next.workspaceDir, PERSONA_FILE)
+          instructionPath = join(next.workspaceDir, INSTRUCTION_FILE)
           try {
-            oldPersona = await readFile(personaPath)
-            hadPersona = true
+            oldInstruction = await readFile(instructionPath)
+            hadInstruction = true
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-              sendJson(response, 500, { error: 'The existing persona file cannot be read.' })
+              sendJson(response, 500, { error: 'The existing instruction file cannot be read.' })
               return
             }
           }
           try {
-            await mkdir(dirname(personaPath), { recursive: true })
-            await writeFile(personaPath, `${personaBody(next.persona).trimEnd()}\n`, { encoding: 'utf8', mode: 0o600 })
+            oldInstruction = await writePersona(next.workspaceDir, next.persona)
           } catch (error) {
-            sendJson(response, 500, { error: `The persona file cannot be written: ${(error as Error).message}` })
+            sendJson(response, 500, { error: `The instruction file cannot be written: ${(error as Error).message}` })
             return
           }
         }
@@ -368,9 +368,9 @@ export function registerRoutes(
           await editor.edit(entry as ConfigEntryLike, current => ({ ...current, ...patch }))
           sendJson(response, 200, { saved: true, workspaceChanged: next.workspaceDir !== config.workspaceDir })
         } catch (error) {
-          if (personaPath !== undefined) {
-            if (hadPersona && oldPersona !== undefined) await writeFile(personaPath, oldPersona, { mode: 0o600 }).catch(() => undefined)
-            else await rm(personaPath, { force: true }).catch(() => undefined)
+          if (instructionPath !== undefined) {
+            if (hadInstruction && oldInstruction !== undefined) await writeFile(instructionPath, oldInstruction, { mode: 0o600 }).catch(() => undefined)
+            else await rm(instructionPath, { force: true }).catch(() => undefined)
           }
           logger.warn(`dsh-luoyu: cannot save settings: ${(error as Error).message}`)
           sendJson(response, 500, { error: (error as Error).message })
