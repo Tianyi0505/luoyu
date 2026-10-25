@@ -23,7 +23,7 @@ import type {
 } from './context.ts'
 import { optionalService, requireService } from './context.ts'
 import type { GroupReplyMode } from './config.ts'
-import { GroupReplyGate, rememberSentMessage, sentMessageId } from './group-rate.ts'
+import { GROUP_ACTIVITY_WINDOW_MS, GroupReplyGate, rememberSentMessage, sentMessageId } from './group-rate.ts'
 import type { OneBotClient } from './onebot/client.ts'
 import { buildOutbound, renderInbound, toPlainChatText } from './onebot/render.ts'
 import { segmentsOf, type MessageEvent, type MessageSegment } from './onebot/types.ts'
@@ -72,6 +72,12 @@ interface TurnBuffer {
   text: string
 }
 
+/** A passive group message retained for the next eligible decision turn. */
+interface PendingGroupMessage {
+  job: InboundJob
+  receivedAt: number
+}
+
 /** Largest number of queued messages per chat. */
 const MAX_QUEUE_PER_CHAT = 20
 
@@ -107,6 +113,20 @@ function assistantText(data: unknown): string {
   return parts.join('')
 }
 
+/** Parse the explicit reply decision for a passive group turn. */
+export function parseGroupReplyDecision(text: string): { kind: 'reply'; text: string } | { kind: 'silent' } | { kind: 'invalid' } {
+  try {
+    const parsed: unknown = JSON.parse(text.trim())
+    if (parsed === null || typeof parsed !== 'object') return { kind: 'invalid' }
+    const decision = parsed as { should_reply?: unknown; reply?: unknown }
+    if (typeof decision.should_reply !== 'boolean' || typeof decision.reply !== 'string') return { kind: 'invalid' }
+    if (!decision.should_reply || decision.reply.trim().length === 0) return { kind: 'silent' }
+    return { kind: 'reply', text: decision.reply.trim() }
+  } catch {
+    return { kind: 'invalid' }
+  }
+}
+
 /** Split one long reply into parts that fit the platform limit. */
 export function splitReply(text: string, limit: number): string[] {
   if (limit <= 0 || text.length <= limit) return [text]
@@ -136,10 +156,13 @@ export function splitReply(text: string, limit: number): string[] {
  * @returns the prompt text.
  */
 export function buildPrompt(job: InboundJob, timeZone: string, receivedAt: number): string {
-  const where = job.kind === 'group' ? `group chat "${job.title}" (group ${job.targetId})` : `private chat with ${job.title} (QQ ${job.targetId})`
-  const header = `[QQ ${where} · ${formatTime(receivedAt, timeZone)} ${timeZone}]`
-  const body = `${job.senderName} (QQ ${job.senderId}): ${job.text}`
-  return `${header}\n${body}`
+  const where = job.kind === 'group' ? 'group chat' : `private chat with ${job.title}`
+  const header = `[${where} · ${formatTime(receivedAt, timeZone)} ${timeZone}]`
+  const body = `${job.senderName}: ${job.text}`
+  const groupDecision = job.kind === 'group' && !job.directlyAddressed
+    ? '\nThese are recent group messages not directed at you. Decide whether you have something relevant and useful to add. Return only a JSON object with this schema: {"should_reply": boolean, "reply": string}. If you should stay silent, set should_reply to false and reply to an empty string. If you should reply, set should_reply to true and put only the message to send in reply. Do not wrap the JSON in Markdown.'
+    : ''
+  return `${header}\n${body}${groupDecision}`
 }
 
 /**
@@ -154,10 +177,11 @@ export class ChatBridge {
   private readonly queues = new Map<string, Promise<void>>()
   private readonly queued = new Map<string, number>()
   private readonly buffers = new Map<string, TurnBuffer[]>()
-  private readonly waiters = new Map<string, (reason: string) => void>()
+  private readonly waiters = new Map<string, { turn?: number; settle: (reason: string) => void }>()
   private readonly resolved = new Map<string, AgentLike>()
   private readonly disposed = new Set<string>()
   private readonly groupRate = new GroupReplyGate()
+  private readonly passiveGroupMessages = new Map<string, PendingGroupMessage[]>()
   private readonly sentGroupMessageIds = new Set<string>()
   private closed = false
 
@@ -191,9 +215,9 @@ export class ChatBridge {
     this.closed = true
     // A turn that is still running would hold its queue until the timeout. The
     // plugin is shutting down, so settle every waiter now.
-    for (const [sessionId, settle] of [...this.waiters]) {
+    for (const [sessionId, waiter] of [...this.waiters]) {
       this.waiters.delete(sessionId)
-      settle('closed')
+      waiter.settle('closed')
     }
     await Promise.allSettled([...this.queues.values()])
   }
@@ -226,7 +250,8 @@ export class ChatBridge {
     const next = previous
       .then(() => this.handle(job))
       .catch((error: unknown) => {
-        this.logger.error(`dsh-luoyu: cannot handle one message of ${job.key}: ${(error as Error).message}`)
+        const detail = error instanceof Error ? error.stack ?? error.message : String(error)
+        this.logger.error(`dsh-luoyu: cannot handle one message of ${job.key}: ${detail}`)
       })
       .finally(() => {
         const remaining = (this.queued.get(job.key) ?? 1) - 1
@@ -271,7 +296,31 @@ export class ChatBridge {
       if (this.options.groupReply === 'mention' && !directlyAddressed) return undefined
       if (!directlyAddressed) {
         groupReservationAt = this.groupRate.reserve(key, now, recentMessages)
-        if (groupReservationAt === undefined) return undefined
+        if (groupReservationAt === undefined) {
+          // Passive chatter is kept together instead of generating one DSH
+          // turn per message. Keep at most two earlier messages; the next
+          // eligible message makes a batch of up to three.
+          const pending = (this.passiveGroupMessages.get(key) ?? [])
+            .filter(message => message.receivedAt >= now - GROUP_ACTIVITY_WINDOW_MS)
+          pending.push({
+            receivedAt: now,
+            job: {
+              key,
+              kind,
+              targetId: groupId,
+              title: groupId,
+              messageId: event.message_id === undefined ? '' : String(event.message_id),
+              senderName: event.sender?.card || event.sender?.nickname || senderId,
+              senderId,
+              text: rendered.text,
+              segments: segmentsOf(event),
+              directlyAddressed,
+            },
+          })
+          if (pending.length > 2) pending.shift()
+          this.passiveGroupMessages.set(key, pending)
+          return undefined
+        }
       }
     }
     const sender = event.sender ?? {}
@@ -279,7 +328,7 @@ export class ChatBridge {
     const nickname = typeof sender.nickname === 'string' && sender.nickname.length > 0 ? sender.nickname : undefined
     const senderName = card ?? nickname ?? senderId
 
-    return {
+    const job: InboundJob = {
       key,
       kind,
       targetId,
@@ -292,6 +341,21 @@ export class ChatBridge {
       directlyAddressed,
       ...(groupReservationAt !== undefined ? { groupReservationAt } : {}),
     }
+    if (kind === 'group' && !directlyAddressed && groupReservationAt !== undefined) {
+      const pending = this.passiveGroupMessages.get(key) ?? []
+      this.passiveGroupMessages.delete(key)
+      if (pending.length > 0) {
+        job.text = [
+          ...pending.map(({ job: message }) => message.senderId === job.senderId
+            ? message.text
+            : `${message.senderName}: ${message.text}`),
+          job.text,
+        ].join('\n')
+        // Do not quote a stale message when the reply is based on a batch.
+        job.messageId = ''
+      }
+    }
+    return job
   }
 
   /** Handle one accepted message. */
@@ -319,10 +383,23 @@ export class ChatBridge {
         this.logger.warn(`dsh-luoyu: turn of ${job.key} ended with "${reason}", no reply is sent`)
         return
       }
-      const text = this.takeReply(sessionId)
-      if (text.length === 0) {
+      const modelText = this.takeReply(sessionId)
+      if (modelText.length === 0) {
         this.logger.warn(`dsh-luoyu: turn of ${job.key} produced no text, no reply is sent`)
         return
+      }
+      let text = modelText
+      if (job.kind === 'group' && !job.directlyAddressed) {
+        const decision = parseGroupReplyDecision(modelText)
+        if (decision.kind === 'silent') {
+          this.logger.debug(`dsh-luoyu: DSH chose not to reply to passive messages in ${job.key}`)
+          return
+        }
+        if (decision.kind === 'invalid') {
+          this.logger.warn(`dsh-luoyu: invalid structured reply decision for ${job.key}, no reply is sent`)
+          return
+        }
+        text = decision.text
       }
       await this.reply(job, text)
       if (job.kind === 'group') this.recordGroupReply(job)
@@ -413,15 +490,21 @@ export class ChatBridge {
     }
   }
 
-  /** Record one session event and settle a waiting turn. */
+  /** Record one session event and settle the matching waiting turn. */
   private observe(session: SessionLike, event: SessionEventLike): void {
     const sessionId = typeof session.id === 'string' ? session.id : ''
     if (sessionId.length === 0) return
+    const waiter = this.waiters.get(sessionId)
+    if (event.type === 'turn/start') {
+      const data = event.data as { turn?: number } | undefined
+      if (waiter !== undefined && typeof data?.turn === 'number') waiter.turn = data.turn
+      return
+    }
     if (event.type === 'assistant/message') {
       const data = event.data as { turn?: number; interrupted?: boolean } | undefined
       if (data === undefined || data.interrupted === true) return
       const turn = typeof data.turn === 'number' ? data.turn : -1
-      if (turn < 0) return
+      if (turn < 0 || waiter?.turn !== turn) return
       const text = assistantText(event.data)
       if (text.length === 0) return
       const buffer = this.buffers.get(sessionId) ?? []
@@ -433,28 +516,26 @@ export class ChatBridge {
     }
     if (event.type === 'turn/end') {
       const data = event.data as { turn?: number; reason?: { kind?: string } } | undefined
-      const kind = data?.reason?.kind ?? 'unknown'
-      const waiter = this.waiters.get(sessionId)
-      if (waiter !== undefined) {
-        this.waiters.delete(sessionId)
-        waiter(kind)
-      }
+      if (waiter === undefined || typeof data?.turn !== 'number' || waiter.turn !== data.turn) return
+      this.waiters.delete(sessionId)
+      waiter.settle(data.reason?.kind ?? 'unknown')
     }
   }
 
-  /** Wait for the next turn end of one session. */
+  /** Wait for the end of the next started turn of one session. */
   private waitForTurn(sessionId: string): Promise<string> {
     return new Promise<string>(resolve => {
-      const timer = setTimeout(() => {
-        if (this.waiters.get(sessionId) === settle) this.waiters.delete(sessionId)
+      let timer: ReturnType<typeof setTimeout>
+      const waiter = { turn: undefined as number | undefined, settle: (reason: string): void => {
+        clearTimeout(timer)
+        resolve(reason)
+      } }
+      timer = setTimeout(() => {
+        if (this.waiters.get(sessionId) === waiter) this.waiters.delete(sessionId)
         resolve('timeout')
       }, this.options.turnTimeoutMs)
       timer.unref?.()
-      const settle = (reason: string): void => {
-        clearTimeout(timer)
-        resolve(reason)
-      }
-      this.waiters.set(sessionId, settle)
+      this.waiters.set(sessionId, waiter)
     })
   }
 

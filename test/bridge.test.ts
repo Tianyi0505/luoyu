@@ -35,7 +35,7 @@ test('returns one part when the limit is not positive', () => {
   assert.deepEqual(splitReply('hello', 0), ['hello'])
 })
 
-test('builds a group prompt with the group number and the sender', () => {
+test('builds a group prompt without exposing QQ identifiers', () => {
   const text = buildPrompt(
     {
       key: 'group:782795932',
@@ -52,13 +52,12 @@ test('builds a group prompt with the group number and the sender', () => {
     'Asia/Shanghai',
     Date.UTC(2026, 9, 22, 2, 30),
   )
-  assert.match(text, /group chat "782795932" \(group 782795932\)/)
-  assert.match(text, /Asia\/Shanghai/)
-  assert.match(text, /^Ada \(QQ 10001\): hello$/m)
-  assert.match(text, /2026-10-22 10:30/)
+  assert.match(text, /\[group chat · 2026-10-22 10:30 Asia\/Shanghai\]/)
+  assert.match(text, /Ada: hello/)
+  assert.doesNotMatch(text, /QQ|10001|782795932/)
 })
 
-test('builds a private prompt with the other QQ number', () => {
+test('builds a private prompt without QQ source identifiers', () => {
   const text = buildPrompt(
     {
       key: 'private:10001',
@@ -75,6 +74,7 @@ test('builds a private prompt with the other QQ number', () => {
     'Asia/Shanghai',
     Date.UTC(2026, 9, 22, 2, 30),
   )
-  assert.match(text, /private chat with Ada \(QQ 10001\)/)
-  assert.match(text, /^Ada \(QQ 10001\): hi$/m)
+  assert.match(text, /\[private chat with Ada · 2026-10-22 10:30 Asia\/Shanghai\]/)
+  assert.match(text, /Ada: hi/)
+  assert.doesNotMatch(text, /QQ|10001/)
 })

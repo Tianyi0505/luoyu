@@ -174,6 +174,11 @@ function assistantEvent(turn: number, text: string): SessionEventLike {
   }
 }
 
+/** The start of one turn. */
+function turnStartEvent(turn: number): SessionEventLike {
+  return { type: 'turn/start', seq: 0, time: 0, data: { turn } }
+}
+
 /** The end of one turn. */
 function turnEndEvent(turn: number, kind = 'completed'): SessionEventLike {
   return { type: 'turn/end', seq: 2, time: 2, data: { turn, reason: { kind } } }
@@ -181,6 +186,7 @@ function turnEndEvent(turn: number, kind = 'completed'): SessionEventLike {
 
 /** Answer the open turn of one session, so the queue moves on. */
 function answer(ctx: FakeContext, session: SessionLike, text: string, turn = 1, kind = 'completed'): void {
+  ctx.emit(session, turnStartEvent(turn))
   if (text.length > 0) ctx.emit(session, assistantEvent(turn, text))
   ctx.emit(session, turnEndEvent(turn, kind))
 }
@@ -308,7 +314,7 @@ test('keeps a five-minute cooldown for low-activity groups', async () => {
     await until(() => (agent()?.sent.length ?? 0) === 1)
     const first = agent()
     assert.ok(first !== undefined)
-    answer(parts.ctx, first.session, 'hello back')
+    answer(parts.ctx, first.session, '{"should_reply":true,"reply":"hello back"}')
     await until(() => parts.client.groups.length === 1)
     assert.equal(parts.bridge.state.chats['group:782795932']?.lastGroupReplyAt, now)
 
@@ -446,8 +452,33 @@ test('sends the prompt text of one private message', async () => {
     await until(() => parts.controller.agents.get('qq-private-10001')?.sent.length === 1)
     const sent = parts.controller.agents.get('qq-private-10001')?.sent[0]
     assert.equal(sent?.role, 'user')
-    assert.match(sent?.content[0]?.text ?? '', /private chat with Ada \(QQ 10001\)/)
-    assert.match(sent?.content[0]?.text ?? '', /Ada \(QQ 10001\): hi/)
+    assert.match(sent?.content[0]?.text ?? '', /private chat with Ada/)
+    assert.match(sent?.content[0]?.text ?? '', /Ada: hi/)
+    assert.doesNotMatch(sent?.content[0]?.text ?? '', /QQ|10001/)
+  } finally {
+    await parts.close()
+  }
+})
+
+test('batches passive group messages before starting a DSH turn', async () => {
+  const parts = await setup()
+  const passive = (messageId: number, text: string): MessageEvent => groupEvent({
+    message_id: messageId,
+    message: [{ type: 'text', data: { text } }],
+  })
+  try {
+    parts.bridge.accept(passive(401, 'first passive message'))
+    await new Promise(resolve => setTimeout(resolve, 30))
+    assert.equal(parts.controller.created.length, 0)
+
+    parts.bridge.accept(passive(402, 'second passive message'))
+    await until(() => parts.controller.agents.get('qq-group-782795932')?.sent.length === 1)
+    const prompt = parts.controller.agents.get('qq-group-782795932')?.sent[0]?.content[0]?.text ?? ''
+    assert.match(prompt, /Ada: first passive message/)
+    assert.doesNotMatch(prompt, /QQ|10001|782795932/)
+    assert.match(prompt, /second passive message/)
+    assert.match(prompt, /Decide whether you have something relevant and useful to add/)
+    assert.match(prompt, /"should_reply": boolean, "reply": string/)
   } finally {
     await parts.close()
   }
@@ -460,11 +491,31 @@ test('answers the chat with the model text', async () => {
     await until(() => parts.controller.agents.get('qq-private-10001')?.sent.length === 1)
     const agent = parts.controller.agents.get('qq-private-10001')
     assert.ok(agent !== undefined)
+    parts.ctx.emit(agent.session, turnStartEvent(1))
     parts.ctx.emit(agent.session, assistantEvent(1, 'hello back'))
     parts.ctx.emit(agent.session, turnEndEvent(1))
     await until(() => parts.client.privates.length === 1)
     assert.equal(parts.client.privates[0]?.userId, '10001')
     assert.deepEqual(parts.client.privates[0]?.message, [{ type: 'text', data: { text: 'hello back' } }])
+  } finally {
+    await parts.close()
+  }
+})
+
+test('ignores unrelated turn ends and forwards the matching DSH reply', async () => {
+  const parts = await setup()
+  try {
+    parts.bridge.accept(privateEvent())
+    await until(() => parts.controller.agents.get('qq-private-10001')?.sent.length === 1)
+    const agent = parts.controller.agents.get('qq-private-10001')
+    assert.ok(agent !== undefined)
+
+    parts.ctx.emit(agent.session, turnEndEvent(99))
+    parts.ctx.emit(agent.session, turnStartEvent(1))
+    parts.ctx.emit(agent.session, assistantEvent(1, 'matching reply'))
+    parts.ctx.emit(agent.session, turnEndEvent(1))
+    await until(() => parts.client.privates.length === 1)
+    assert.deepEqual(parts.client.privates[0]?.message, [{ type: 'text', data: { text: 'matching reply' } }])
   } finally {
     await parts.close()
   }
@@ -477,6 +528,7 @@ test('quotes the first part of a group reply', async () => {
     await until(() => parts.controller.agents.get('qq-group-782795932')?.sent.length === 1)
     const agent = parts.controller.agents.get('qq-group-782795932')
     assert.ok(agent !== undefined)
+    parts.ctx.emit(agent.session, turnStartEvent(1))
     parts.ctx.emit(agent.session, assistantEvent(1, 'hi there'))
     parts.ctx.emit(agent.session, turnEndEvent(1))
     await until(() => parts.client.groups.length === 1)
@@ -490,6 +542,50 @@ test('quotes the first part of a group reply', async () => {
   }
 })
 
+test('does not forward passive group messages when DSH returns should_reply false', async () => {
+  const parts = await setup()
+  const passive = (messageId: number, text: string): MessageEvent => groupEvent({
+    message_id: messageId,
+    message: [{ type: 'text', data: { text } }],
+  })
+  try {
+    parts.bridge.accept(passive(410, 'first message'))
+    parts.bridge.accept(passive(411, 'second message'))
+    await until(() => parts.controller.agents.get('qq-group-782795932')?.sent.length === 1)
+    const agent = parts.controller.agents.get('qq-group-782795932')
+    assert.ok(agent !== undefined)
+    parts.ctx.emit(agent.session, turnStartEvent(1))
+    parts.ctx.emit(agent.session, assistantEvent(1, '{"should_reply":false,"reply":""}'))
+    parts.ctx.emit(agent.session, turnEndEvent(1))
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.equal(parts.client.groups.length, 0)
+  } finally {
+    await parts.close()
+  }
+})
+
+test('forwards only the reply field when DSH returns should_reply true', async () => {
+  const parts = await setup()
+  const passive = (messageId: number, text: string): MessageEvent => groupEvent({
+    message_id: messageId,
+    message: [{ type: 'text', data: { text } }],
+  })
+  try {
+    parts.bridge.accept(passive(412, 'first message'))
+    parts.bridge.accept(passive(413, 'second message'))
+    await until(() => parts.controller.agents.get('qq-group-782795932')?.sent.length === 1)
+    const agent = parts.controller.agents.get('qq-group-782795932')
+    assert.ok(agent !== undefined)
+    parts.ctx.emit(agent.session, turnStartEvent(1))
+    parts.ctx.emit(agent.session, assistantEvent(1, '{"should_reply":true,"reply":"有用的群聊回复"}'))
+    parts.ctx.emit(agent.session, turnEndEvent(1))
+    await until(() => parts.client.groups.length === 1)
+    assert.deepEqual(parts.client.groups[0]?.message, [{ type: 'text', data: { text: '有用的群聊回复' } }])
+  } finally {
+    await parts.close()
+  }
+})
+
 test('does not answer when the turn ends with an error', async () => {
   const parts = await setup()
   try {
@@ -497,6 +593,7 @@ test('does not answer when the turn ends with an error', async () => {
     await until(() => parts.controller.agents.get('qq-private-10001')?.sent.length === 1)
     const agent = parts.controller.agents.get('qq-private-10001')
     assert.ok(agent !== undefined)
+    parts.ctx.emit(agent.session, turnStartEvent(1))
     parts.ctx.emit(agent.session, assistantEvent(1, 'partial'))
     parts.ctx.emit(agent.session, turnEndEvent(1, 'error'))
     await new Promise(resolve => setTimeout(resolve, 40))
@@ -513,6 +610,7 @@ test('does not answer when the turn produced no text', async () => {
     await until(() => parts.controller.agents.get('qq-private-10001')?.sent.length === 1)
     const agent = parts.controller.agents.get('qq-private-10001')
     assert.ok(agent !== undefined)
+    parts.ctx.emit(agent.session, turnStartEvent(1))
     parts.ctx.emit(agent.session, turnEndEvent(1))
     await new Promise(resolve => setTimeout(resolve, 40))
     assert.equal(parts.client.privates.length, 0)
