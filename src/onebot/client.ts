@@ -9,7 +9,7 @@
  * @module dsh-luoyu/onebot/client
  */
 
-import WebSocket from 'ws'
+import { WebSocket } from 'ws'
 import type { ActionResult, MessageEvent, MessageSegment, NoticeEvent } from './types.ts'
 import type { PluginLogger } from '../context.ts'
 

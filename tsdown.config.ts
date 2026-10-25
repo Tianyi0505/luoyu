@@ -3,8 +3,8 @@
  *
  * The build emits one ESM entry. Every DeepSeek Harness package stays
  * external: the host supplies one shared copy, and a second copy in the
- * bundle would break service identity. Runtime dependencies stay external
- * too, so that `ws` resolves from this package's own `node_modules`.
+ * bundle would break service identity. The `ws` runtime dependency is bundled
+ * to avoid environment-specific export-condition resolution in the host.
  *
  * @module dsh-luoyu/tsdown.config
  */
@@ -22,6 +22,9 @@ export default defineConfig({
   clean: true,
   sourcemap: false,
   deps: {
+    // Keep Harness packages external to preserve shared service identity, but
+    // bundle ws so the host loader cannot select its browser export condition.
+    alwaysBundle: ['ws'],
     neverBundle: [/^@deepseek-ai\//],
   },
 })

@@ -15,6 +15,7 @@ test('declares the client packages that provide its services', async () => {
   assert.ok(manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-locale'))
   assert.ok(manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-renderer'))
   assert.ok(manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-settings'))
+  assert.ok(manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-workspace'))
 })
 
 test('registers a Luoyu section with the Harness module loader', async () => {
@@ -36,7 +37,7 @@ test('registers a Luoyu section with the Harness module loader', async () => {
     assert.equal(name, 'react')
     return { createElement: () => null }
   })
-  assert.equal(plugin.inject.join(','), 'slots,locale')
+  assert.equal(plugin.inject.join(','), 'slots,locale,uiWorkspace')
 
   let options: Record<string, unknown> | undefined
   let component: unknown

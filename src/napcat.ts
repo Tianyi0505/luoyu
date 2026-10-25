@@ -16,8 +16,10 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
-import { access, chmod, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
 import type { PluginLogger } from './context.ts'
@@ -36,6 +38,119 @@ const LINUX_QQ_CANDIDATES = [
   '/usr/share/qq',
   '/usr/local/QQ',
 ]
+
+/** Tencent's current official Linux package configuration feed. */
+const QQ_PACKAGE_CONFIG = 'https://qq-web.cdn-go.cn/im.qq.com_new/latest/rainbow/pcConfig.json'
+
+/** Tencent download hosts allowed by the official package feed. */
+const QQ_DOWNLOAD_HOSTS = new Set(['qqdl.gtimg.cn', 'dldir1.qq.com', 'dldir1v6.qq.com'])
+
+/** Select and validate Tencent's official Debian package URL for this CPU. */
+export function selectOfficialQqDebUrl(config: unknown, architecture: string): string {
+  if (typeof config !== 'object' || config === null) throw new Error('Tencent QQ download metadata is invalid.')
+  const linux = (config as { Linux?: { x64DownloadUrl?: { deb?: unknown }; armDownloadUrl?: { deb?: unknown } } }).Linux
+  const url = architecture === 'x64' ? linux?.x64DownloadUrl?.deb : architecture === 'arm64' ? linux?.armDownloadUrl?.deb : undefined
+  if (typeof url !== 'string') throw new Error(`Tencent QQ does not provide an official .deb for ${architecture}.`)
+  let parsed: URL
+  try { parsed = new URL(url) } catch { throw new Error('Tencent QQ returned an invalid package URL.') }
+  if (parsed.protocol !== 'https:' || !QQ_DOWNLOAD_HOSTS.has(parsed.hostname) || !parsed.pathname.toLowerCase().endsWith('.deb')) {
+    throw new Error('Tencent QQ returned a package URL outside its official HTTPS download hosts.')
+  }
+  return parsed.toString()
+}
+
+/** Run an installation command and capture a short diagnostic tail. */
+function runInstallCommand(command: string, args: string[], timeoutMs = 10 * 60_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let output = ''
+    const capture = (chunk: Buffer): void => {
+      output = `${output}${chunk.toString()}`.slice(-8000)
+    }
+    child.stdout?.on('data', capture)
+    child.stderr?.on('data', capture)
+    const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs)
+    child.on('error', error => {
+      clearTimeout(timer)
+      reject(error)
+    })
+    child.on('close', code => {
+      clearTimeout(timer)
+      if (code === 0) resolve()
+      else reject(new Error(`${command} exited with code ${code ?? 'unknown'}${output.trim() ? `: ${output.trim()}` : ''}`))
+    })
+  })
+}
+
+/** Explain a rejected Tencent package download with a usable official fallback. */
+export function formatQqDownloadError(status: number): string {
+  if (status === 403) {
+    return 'Tencent’s official QQ download CDN rejected this host’s request (HTTP 403). This is not a sudo authorization error. Download the official Linux .deb from https://im.qq.com/linuxqq/download.html, install it on this host, and start NapCat again.'
+  }
+  return `Cannot download Tencent QQ package: HTTP ${status}.`
+}
+
+/** Download a Tencent package while checking every redirect remains on Tencent CDN hosts. */
+async function downloadOfficialQq(url: string, target: string): Promise<void> {
+  let current = url
+  for (let redirects = 0; redirects <= 5; redirects++) {
+    const parsed = new URL(current)
+    if (parsed.protocol !== 'https:' || !QQ_DOWNLOAD_HOSTS.has(parsed.hostname)) {
+      throw new Error('Tencent QQ package redirected outside its official HTTPS download hosts.')
+    }
+    const response = await fetch(current, { redirect: 'manual', signal: AbortSignal.timeout(15 * 60_000) })
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get('location')
+      if (!location || redirects === 5) throw new Error('Tencent QQ package returned an invalid redirect.')
+      current = new URL(location, current).toString()
+      continue
+    }
+    if (!response.ok || response.body === null) throw new Error(formatQqDownloadError(response.status))
+    await pipeline(Readable.fromWeb(response.body as never), createWriteStream(target, { flags: 'wx', mode: 0o600 }))
+    const file = await open(target, 'r')
+    try {
+      const header = Buffer.alloc(8)
+      const { bytesRead } = await file.read(header, 0, header.length, 0)
+      if (bytesRead !== 8 || header.toString() !== '!<arch>\n') throw new Error('Tencent download is not a valid Debian package.')
+    } finally {
+      await file.close()
+    }
+    return
+  }
+  throw new Error('Tencent QQ package exceeded the redirect limit.')
+}
+
+/** Download and install official Tencent QQ on a supported Debian Linux host. */
+async function installOfficialQq(): Promise<void> {
+  if (process.platform !== 'linux') throw new Error('Automatic QQ installation is supported only on Debian-based Linux hosts.')
+  const response = await fetch(QQ_PACKAGE_CONFIG, { signal: AbortSignal.timeout(15_000) })
+  if (!response.ok) throw new Error(`Cannot read Tencent QQ download metadata: HTTP ${response.status}.`)
+  const url = selectOfficialQqDebUrl(await response.json(), process.arch)
+  const packagePath = join(tmpdir(), `dsh-luoyu-qq-${randomUUID()}.deb`)
+  try {
+    await downloadOfficialQq(url, packagePath)
+    try {
+      await runInstallCommand('sudo', ['-n', 'apt-get', 'install', '-y', '--', packagePath])
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error('sudo is not installed. Install QQ manually from Tencent’s Linux QQ download page.')
+      }
+      if (/password is required|a password is required|no new privileges|not allowed to execute/i.test(detail)) {
+        try {
+          await runInstallCommand('pkexec', ['apt-get', 'install', '-y', '--', packagePath])
+        } catch (authorizationError) {
+          const authorizationDetail = authorizationError instanceof Error ? authorizationError.message : String(authorizationError)
+          throw new Error(`QQ needs administrator authorization. Configure passwordless sudo or allow the desktop authorization prompt (pkexec): ${authorizationDetail}`)
+        }
+      } else {
+        throw new Error(`Automatic QQ installation failed: ${detail}`)
+      }
+    }
+  } finally {
+    await rm(packagePath, { force: true })
+  }
+}
 
 /** One step of the login flow. */
 export type LoginPhase =
@@ -79,6 +194,8 @@ export interface SidecarStatus {
 export interface SidecarOptions {
   /** Directory that holds the installation, the configuration, and the cache. */
   napcatDir: string
+  /** Directory that holds the QQ client used by NapCat. */
+  qqDir: string
   /** Release tag, or `latest`. */
   version: string
   /** Port of the OneBot WebSocket server. */
@@ -119,8 +236,9 @@ async function exists(path: string): Promise<boolean> {
 }
 
 /** Find the directory of the installed QQ client. */
-export async function detectQq(): Promise<string | undefined> {
-  for (const candidate of LINUX_QQ_CANDIDATES) {
+export async function detectQq(configuredDir?: string): Promise<string | undefined> {
+  const candidates = configuredDir === undefined ? LINUX_QQ_CANDIDATES : [configuredDir, ...LINUX_QQ_CANDIDATES]
+  for (const candidate of candidates) {
     if (await exists(join(candidate, 'resources', 'app', 'package.json'))) return candidate
   }
   return undefined
@@ -347,12 +465,22 @@ export class NapCatSidecar {
    * @throws SidecarDependencyError when a dependency is absent.
    */
   async checkDependencies(): Promise<void> {
-    const qq = await detectQq()
+    let qq = await detectQq(this.options.qqDir)
     if (qq === undefined) {
-      throw new SidecarDependencyError(
-        'needs-qq',
-        'The QQ client is not installed. NapCat loads the official QQ client, so the host needs a Linux QQ installation. Install the deb package from https://im.qq.com/linuxqq/ and start the plugin again.',
-      )
+      this.setStatus({ phase: 'starting', detail: 'QQ is missing. Downloading the current official Tencent Linux package and requesting administrator authorization.' })
+      try {
+        await installOfficialQq()
+        qq = await detectQq(this.options.qqDir)
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        this.setStatus({ phase: 'needs-qq', detail })
+        throw new SidecarDependencyError('needs-qq', detail)
+      }
+      if (qq === undefined) {
+        const detail = 'QQ installation completed, but its client files were not found. Install QQ manually from https://im.qq.com/download/#/linux and retry.'
+        this.setStatus({ phase: 'needs-qq', detail })
+        throw new SidecarDependencyError('needs-qq', detail)
+      }
     }
     this.setStatus({ qqPath: qq })
     if (process.platform === 'linux' && !hasDisplay()) {
@@ -523,7 +651,7 @@ export class NapCatSidecar {
   async inspect(): Promise<SidecarStatus> {
     const installed = await exists(this.entryPath)
     const version = installed ? (await readFile(this.versionPath, 'utf8').catch(() => '')).trim() : undefined
-    const qq = await detectQq()
+    const qq = await detectQq(this.options.qqDir)
     const qrcode = (await exists(this.qrcodePath)) ? this.qrcodePath : undefined
     let phase: LoginPhase = this.status.phase
     let detail = this.status.detail
@@ -532,7 +660,7 @@ export class NapCatSidecar {
       detail = 'NapCat is not installed. Start the plugin to download it.'
     } else if (qq === undefined) {
       phase = 'needs-qq'
-      detail = 'The QQ client is not installed on this host.'
+      detail = 'QQ is not installed yet. Start NapCat to try automatic installation of Tencent’s official Linux QQ package.'
     } else if (process.platform === 'linux' && !hasDisplay()) {
       phase = 'needs-display'
       detail = 'No display server is available for the QQ client.'

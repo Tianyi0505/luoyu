@@ -63,11 +63,9 @@ starts a new DSH session. The existing sessions stay available in DSH.
 
 - DeepSeek Harness 0.2.x.
 - Node.js 22.19 or later.
-- The official Linux QQ client from <https://im.qq.com/linuxqq/>.
+- The official Linux QQ client. When it is missing, **Start NapCat** resolves the current architecture's `.deb` from Tencent's official download configuration and attempts installation with `sudo -n`, falling back to the desktop `pkexec` authorization prompt. This requires a Debian-based Linux host with `apt-get` and either passwordless sudo or desktop authorization. If installation is unavailable, the status page explains why and links to manual installation.
 - A display server. The QQ client is an Electron application. On a host
   without a desktop, install Xvfb and start the Harness with `xvfb-run`.
-
-The status page reports a missing dependency. It does not hide the failure.
 
 ## Configuration
 
@@ -86,6 +84,7 @@ workspace:
 | `httpUrl` | `http://127.0.0.1:3000` | OneBot action endpoint. |
 | `accessToken` | empty | Token that NapCat requires. |
 | `napcatDir` | `<DSH_HOME>/integrations/dsh-luoyu/napcat` | Installation directory of the managed NapCat. |
+| `qqDir` | `tools/napcat/opt/QQ` under the plugin workspace | Directory containing the QQ client used by NapCat. |
 | `napcatVersion` | `latest` | NapCat release tag. |
 | `napcatWebuiPort` | `6099` | Port of the NapCat web interface. |
 | `napcatWebuiToken` | empty | Token of the NapCat web interface. |

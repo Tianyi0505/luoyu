@@ -24,7 +24,7 @@ window.__ModuleLoader__.load({
       connection: 'QQ connection', connectionHint: 'NapCat signs in as your own QQ account.', account: 'QQ account', transport: 'OneBot connection', unknown: 'Not signed in', connected: 'Connected', disconnected: 'Disconnected',
       online: 'Online', starting: 'Starting', stopped: 'Stopped', needsLogin: 'Login needed', unavailable: 'Unavailable', loading: 'Checking…',
       start: 'Start NapCat', stop: 'Stop NapCat', refreshQr: 'Refresh QR', qrTitle: 'Scan with QQ', qrHint: 'Open QQ on your phone and scan this code to sign in.', qrWaiting: 'Your login code will appear here after NapCat starts.',
-      workspace: 'Bot workspace', workspaceHint: 'Each QQ chat gets its own DSH session. Memories stay in this folder.', workspacePath: 'Workspace folder', workspaceHelp: 'An absolute folder path for this bot’s memories and files.',
+      workspace: 'Bot workspace', workspaceHint: 'Each QQ chat gets its own DSH session. Memories stay in this folder.', workspacePath: 'Workspace folder', workspaceHelp: 'Choose a folder using the DSH directory picker.', chooseFolder: 'Choose folder',
       persona: 'Persona', personaHelp: 'Set the bot’s voice, identity, and conversation style.', privateReply: 'Reply to private messages', privateReplyHelp: 'Allow the bot to answer direct messages.', groupReply: 'Group chat replies', groupReplyHelp: 'Balanced mode waits for an active chat and follows the original 90–300 second reply interval. Direct mentions and replies to the bot are immediate.', balanced: 'Balanced participation', mention: 'Only when mentioned',
       save: 'Save changes', saving: 'Saving…', saved: 'Settings saved to this DSH profile.', workspaceChanged: 'Workspace updated. New chats will use fresh sessions; existing sessions remain in DSH.', saveHint: 'Changes are stored in this DSH profile.', loadingSettings: 'Loading your settings…',
       requestSent: 'NapCat request sent.', stoppedNotice: 'NapCat stopped.', profile: 'DSH PROFILE', ready: 'QQ is connected', noConnection: 'QQ is not connected yet', statusUnavailable: 'Could not load the connection status.',
@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
       connection: 'QQ 连接', connectionHint: 'NapCat 将以你的 QQ 账号登录。', account: 'QQ 账号', transport: 'OneBot 连接', unknown: '尚未登录', connected: '已连接', disconnected: '未连接',
       online: '已连接', starting: '正在启动', stopped: '已停止', needsLogin: '等待登录', unavailable: '不可用', loading: '正在检查…',
       start: '启动 NapCat', stop: '停止 NapCat', refreshQr: '刷新二维码', qrTitle: '使用 QQ 扫码', qrHint: '打开手机 QQ，扫描二维码完成登录。', qrWaiting: '启动 NapCat 后，登录二维码会显示在这里。',
-      workspace: '机器人工作区', workspaceHint: '每个 QQ 聊天都会使用独立 DSH 会话，记忆保存在此目录。', workspacePath: '工作区目录', workspaceHelp: '用于保存机器人记忆和文件的绝对路径。',
+      workspace: '机器人工作区', workspaceHint: '每个 QQ 聊天都会使用独立 DSH 会话，记忆保存在此目录。', workspacePath: '工作区目录', workspaceHelp: '使用 DSH 文件夹选择器选择目录。', chooseFolder: '选择目录',
       persona: '机器人人设', personaHelp: '描述机器人的身份、语气和交流风格。', privateReply: '回复私聊消息', privateReplyHelp: '允许机器人回复私聊消息。', groupReply: '群聊回复频率', groupReplyHelp: '适度模式参考旧版 90–300 秒动态间隔；活跃群聊更频繁。@机器人或回复机器人消息时立即响应。', balanced: '适度参与', mention: '仅在被提及时回复',
       save: '保存更改', saving: '正在保存…', saved: '设置已保存到当前 DSH 配置。', workspaceChanged: '工作区已更新。新聊天将使用新会话，旧会话仍保留在 DSH 中。', saveHint: '更改会保存到当前 DSH 配置。', loadingSettings: '正在读取设置…',
       requestSent: '已发送 NapCat 操作请求。', stoppedNotice: 'NapCat 已停止。', profile: 'DSH 配置', ready: 'QQ 已连接', noConnection: 'QQ 尚未连接', statusUnavailable: '无法读取连接状态。',
@@ -57,7 +57,7 @@ window.__ModuleLoader__.load({
       style.textContent = css
       document.head.appendChild(style)
     }
-    function createSettingsPage(t) {
+    function createSettingsPage(t, uiWorkspace) {
       return function LuoyuSettings() {
         const [settings, setSettings] = React.useState(null)
         const [saved, setSaved] = React.useState(null)
@@ -178,7 +178,16 @@ window.__ModuleLoader__.load({
                 h('p', { className: 'luoyu__qr-copy' }, status?.sidecar?.qrcodePath && !connected ? t('qrHint') : t('qrWaiting')))),
             settings ? h('form', { className: 'luoyu__panel luoyu__panel--wide', onSubmit: save },
               panelHead('folder', t('workspace'), t('workspaceHint')),
-              field(t('workspacePath'), t('workspaceHelp'), h('input', { className: 'luoyu__input', value: settings.workspaceDir, onChange: event => setSettings({ ...settings, workspaceDir: event.target.value }), required: true })),
+              field(t('workspacePath'), t('workspaceHelp'), h('div', { className: 'luoyu__actions' },
+                h('span', { className: 'luoyu__input', style: { flex: '1 1 320px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: '19px' }, title: settings.workspaceDir }, settings.workspaceDir),
+                h('button', { className: 'luoyu__button', type: 'button', disabled: busy, onClick: async () => {
+                  try {
+                    const directory = await uiWorkspace.pickDirectory()
+                    if (directory) setSettings(current => ({ ...current, workspaceDir: directory }))
+                  } catch (cause) {
+                    setError(cause instanceof Error ? cause.message : String(cause))
+                  }
+                } }, h(Icon, { name: 'folder', size: 15 }), t('chooseFolder')))),
               field(t('persona'), t('personaHelp'), h('textarea', { className: 'luoyu__input luoyu__textarea', value: settings.persona, onChange: event => setSettings({ ...settings, persona: event.target.value }), required: true, maxLength: 50000 })),
               h('label', { className: 'luoyu__toggle-row' }, h('span', { className: 'luoyu__toggle-copy' }, h('span', { className: 'luoyu__label' }, t('privateReply')), h('span', { className: 'luoyu__help' }, t('privateReplyHelp'))), h('input', { className: 'luoyu__check', type: 'checkbox', checked: settings.privateReply, onChange: event => setSettings({ ...settings, privateReply: event.target.checked }) })),
               field(t('groupReply'), t('groupReplyHelp'), h('select', { className: 'luoyu__input', value: settings.groupReply, onChange: event => setSettings({ ...settings, groupReply: event.target.value }) }, h('option', { value: 'balanced' }, t('balanced')), h('option', { value: 'mention' }, t('mention')))),
@@ -189,13 +198,13 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots', 'locale'],
+      inject: ['slots', 'locale', 'uiWorkspace'],
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'luoyu: dictionaries')
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section', id: 'luoyu', order: 30, label: () => t('nav'),
-        }, createSettingsPage(t)))
+        }, createSettingsPage(t, ctx.uiWorkspace)))
       },
     }
   },

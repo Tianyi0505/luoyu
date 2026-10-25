@@ -59,11 +59,9 @@ QQ 扫描二维码。登录完成后，插件连接 NapCat。
 
 - DeepSeek Harness 0.2.x。
 - Node.js 22.19 或更高版本。
-- 官方 Linux QQ 客户端：<https://im.qq.com/linuxqq/>。
+- 官方 Linux QQ 客户端：点击“启动 NapCat”时，如果检测不到 QQ，插件会从腾讯官方配置源获取当前架构对应的 `.deb`，并尝试用 `sudo -n` 安装；需要交互授权时会回退到桌面 `pkexec`。这要求 Debian/Ubuntu 系统具备 `apt-get`，且 sudo 免密或桌面授权可用。若安装条件不满足，状态页会显示原因并提供手动安装指引。
 - 显示服务器。QQ 客户端是 Electron 应用。如果主机没有桌面，请安装 Xvfb，并用
   `xvfb-run` 启动 Harness。
-
-状态页会报告缺失的依赖。它不会隐藏错误。
 
 ## 配置
 
@@ -81,6 +79,7 @@ QQ 扫描二维码。登录完成后，插件连接 NapCat。
 | `httpUrl` | `http://127.0.0.1:3000` | OneBot 动作接口。 |
 | `accessToken` | 空 | NapCat 要求的令牌。 |
 | `napcatDir` | `<DSH_HOME>/integrations/dsh-luoyu/napcat` | 托管模式下的 NapCat 安装目录。 |
+| `qqDir` | 插件工作区下的 `tools/napcat/opt/QQ` | NapCat 使用的 QQ 客户端目录。 |
 | `napcatVersion` | `latest` | NapCat 发布标签。 |
 | `napcatWebuiPort` | `6099` | NapCat Web 界面的端口。 |
 | `napcatWebuiToken` | 空 | NapCat Web 界面的令牌。 |

@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { Config, DEFAULT_PERSONA, defaultDataDir, defaultWorkspaceDir, resolveConfig, resolveDshHome } from '../src/config.ts'
+import { Config, DEFAULT_PERSONA, defaultDataDir, defaultQqDir, defaultWorkspaceDir, resolveConfig, resolveDshHome } from '../src/config.ts'
 
 /** Validate a partial configuration the way the Harness does. */
 const parse = Config as unknown as (input: Record<string, unknown>) => ReturnType<typeof Config>
@@ -61,6 +61,7 @@ test('accepts an empty configuration and fills every field', () => {
   assert.equal(value.turnTimeoutMs, 600_000)
   assert.equal(value.napcatWebuiPort, 6099)
   assert.equal(value.napcatVersion, 'latest')
+  assert.equal(value.qqDir, defaultQqDir())
   assert.equal(value.persona, DEFAULT_PERSONA)
 })
 
@@ -77,6 +78,8 @@ test('rejects a negative reply limit', () => {
   assert.throws(() => parse({ maxReplyChars: -1 }))
 })
 
-test('the persona forbids the disclosure of credentials', () => {
-  assert.match(DEFAULT_PERSONA, /Never reveal credentials/)
+test('the default persona restores Luoyu identity and protects credentials', () => {
+  assert.match(DEFAULT_PERSONA, /你是洛雨/)
+  assert.match(DEFAULT_PERSONA, /真诚、活泼、有自己的判断/)
+  assert.match(DEFAULT_PERSONA, /不泄露凭据、令牌、文件路径/)
 })

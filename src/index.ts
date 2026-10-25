@@ -78,6 +78,7 @@ export async function apply(ctx: PluginContext, input?: Partial<Config>): Promis
   const sidecar = new NapCatSidecar(
     {
       napcatDir: config.napcatDir,
+      qqDir: config.qqDir,
       version: config.napcatVersion,
       wsPort: portOf(config.wsUrl, 3001),
       httpPort: portOf(config.httpUrl, 3000),

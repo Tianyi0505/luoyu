@@ -14,6 +14,9 @@ pnpm-lock.yaml
 *.tsbuildinfo
 coverage/
 
+# Local QQ client installation (large vendor binaries)
+tools/napcat/
+
 # Runtime data
 data/
 logs/
