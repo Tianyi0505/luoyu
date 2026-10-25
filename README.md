@@ -59,6 +59,20 @@ The status page is at `http://127.0.0.1:3080/luoyu`. The Settings section saves
 each change to the active profile. If you change the workspace, each QQ chat
 starts a new DSH session. The existing sessions stay available in DSH.
 
+## Docker
+
+`deploy/docker/` packages the plugin together with the Harness. The workspace is
+a host directory (the `luoyu-memory` repository) bind-mounted into the
+container, and the Harness UI is published on port 3090:
+
+~~~bash
+git clone git@github.com:Tianyi0505/luoyu-memory.git workspace
+docker compose -f deploy/docker/docker-compose.yml up -d --build
+~~~
+
+Open `http://localhost:3090/luoyu` and scan the QR code. See
+[deploy/docker/README.md](deploy/docker/README.md) for details.
+
 ## Requirements
 
 - DeepSeek Harness 0.2.x.

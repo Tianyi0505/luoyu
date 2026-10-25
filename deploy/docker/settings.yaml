@@ -1,0 +1,8 @@
+# Seed for $DSH_HOME/settings.yaml (copied once, on the first container start).
+# Model selection for every session the Harness creates — including the QQ
+# chats Luoyu opens. Edit it in the UI afterwards, or delete the
+# luoyu-dsh-home volume to re-seed.
+agent-default-model:
+  provider: deepseek-official
+  model: deepseek-v4-pro
+  reasoningEffort: max

@@ -1,0 +1,7 @@
+# Normalize line endings: the container runs these files, and a CRLF shebang
+# makes a shell script unrunnable on Linux.
+* text=auto eol=lf
+*.sh text eol=lf
+*.png binary
+*.jpg binary
+*.ico binary

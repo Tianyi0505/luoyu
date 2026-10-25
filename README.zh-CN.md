@@ -55,6 +55,19 @@ QQ 扫描二维码。登录完成后，插件连接 NapCat。
 状态页位于 `http://127.0.0.1:3080/luoyu`。设置区域会把每次更改保存到当前配置。
 如果你更改工作区，每个 QQ 聊天都会启动新的 DSH 会话。现有会话仍保留在 DSH 中。
 
+## Docker
+
+`deploy/docker/` 里有一份把插件和 Harness 一起跑起来的镜像。工作区是宿主机目录
+（`luoyu-memory` 仓库）通过数据卷挂进去的，Harness UI 发布在 3090 端口：
+
+~~~bash
+git clone git@github.com:Tianyi0505/luoyu-memory.git workspace
+docker compose -f deploy/docker/docker-compose.yml up -d --build
+~~~
+
+打开 `http://localhost:3090/luoyu` 扫码登录。细节见
+[deploy/docker/README.md](deploy/docker/README.md)。
+
 ## 环境要求
 
 - DeepSeek Harness 0.2.x。

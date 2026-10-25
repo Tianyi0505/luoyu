@@ -30,3 +30,6 @@ logs/
 *.swp
 .DS_Store
 Thumbs.db
+
+# Host clone of the luoyu-memory workspace repo (mounted as /workspace)
+/workspace/

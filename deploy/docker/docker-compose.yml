@@ -1,0 +1,57 @@
+name: luoyu
+
+# DeepSeek Harness + the Luoyu QQ plugin (dsh-luoyu) on this machine.
+#
+#   docker compose -f deploy/docker/docker-compose.yml up -d --build
+#   http://localhost:3090  → Harness UI · http://localhost:3090/luoyu → Luoyu
+#
+# Run from the repository root, or pass `--file deploy/docker/docker-compose.yml`.
+# Relative paths below resolve against this file's directory.
+
+services:
+  dsh:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        DSH_VERSION: ${DSH_VERSION:-0.2.1-rc.2}
+        PNPM_VERSION: ${PNPM_VERSION:-12.15.0}
+    image: luoyu/dsh:${LUOYU_IMAGE_TAG:-local}
+    container_name: luoyu-dsh
+    restart: unless-stopped
+    ports:
+      # host:container — the Harness UI is published on 3090.
+      - "${LUOYU_PORT:-3090}:3090"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DSH_HOME: /dsh-home
+      DSH_WEB_PORT: "3080"
+      DSH_PUBLISHED_PORT: "3090"
+      LUOYU_WORKSPACE_DIR: /workspace
+      # 0 disables the Xvfb display the QQ client needs.
+      LUOYU_XVFB: ${LUOYU_XVFB:-1}
+    volumes:
+      # Harness home: profiles, sessions, chat→session state, managed NapCat.
+      - luoyu-dsh-home:/dsh-home
+      # The bot workspace (persona + memory Markdown) — the luoyu-memory repo.
+      - ${LUOYU_WORKSPACE_HOST:-../../workspace}:/workspace
+      # Luoyu plugin settings, applied as the Harness home patch layer.
+      - ./luoyu.patch.yml:/dsh-home/cordis.patch.yml
+      # Live plugin code from this checkout: run `npm run build` on the host,
+      # then `docker compose ... restart dsh` to load it without rebuilding.
+      - ../../lib:/opt/dsh-luoyu/lib:ro
+      - ../../client.js:/opt/dsh-luoyu/client.js:ro
+      - ../../cordis.patch.yml:/opt/dsh-luoyu/cordis.patch.yml:ro
+    shm_size: "1gb"
+    healthcheck:
+      # 401 is the healthy answer too: the UI wants its ?token= login first.
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3090/ | grep -qE '^(200|401)$'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  luoyu-dsh-home:
+    name: luoyu-dsh-home

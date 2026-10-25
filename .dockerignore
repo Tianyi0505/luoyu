@@ -1,0 +1,21 @@
+# Build context for deploy/docker/Dockerfile (repository root).
+.git
+.gitignore
+.idea
+.vscode
+.workbuddy
+
+node_modules
+lib/*.map
+
+# Local runtime data, never part of the image.
+data
+harness
+output
+workspace
+deploy/private
+deploy/docker/.env
+
+# Not needed to build the bundle.
+test
+specs

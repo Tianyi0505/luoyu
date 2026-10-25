@@ -1,0 +1,26 @@
+# Luoyu plugin configuration.
+#
+# Mounted at $DSH_HOME/cordis.patch.yml, i.e. the Harness *home* patch layer:
+# it is applied over every bundle layer, so the values here win over the
+# plugin's own defaults and can be edited by the Settings → Luoyu page.
+#
+# Every key below is optional; omitted keys fall back to the schema defaults in
+# src/config.ts.
+
+- id: dsh-luoyu
+  config:
+    # The bot workspace — mounted from the host at this path by compose.
+    workspaceDir: /workspace
+    timeZone: Asia/Shanghai
+    # managed = the plugin downloads and runs NapCat itself (needs the QQ
+    # client, which the plugin installs through apt on first start).
+    # external = use a NapCat you run elsewhere; point wsUrl/httpUrl at it.
+    napcatMode: managed
+    autoStart: true
+    # QQ client extracted into the volume by install-qq.sh; persists across
+    # `docker compose down/up` instead of living in the image layer.
+    qqDir: /dsh-home/qq/opt/QQ
+    privateReply: true
+    groupReply: balanced
+    permissionPreset: danger-full-access
+    maxReplyChars: 1500
