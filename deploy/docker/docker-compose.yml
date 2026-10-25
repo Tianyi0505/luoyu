@@ -33,6 +33,8 @@ services:
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # OneBot token, resolved by the home patch layer (!!js process.env…).
+      NAPCAT_ACCESS_TOKEN: ${NAPCAT_ACCESS_TOKEN:-}
       DSH_HOME: /dsh-home
       DSH_WEB_PORT: "3080"
       LUOYU_PORT: ${LUOYU_PORT:-3090}
@@ -46,8 +48,6 @@ services:
       - ${LUOYU_WORKSPACE_HOST:-../../workspace}:/workspace
       # Luoyu plugin settings, applied as the Harness home patch layer.
       - ./luoyu.patch.yml:/dsh-home/cordis.patch.yml
-      # Secrets (OneBot token), applied after it; never committed.
-      - ./luoyu.local.patch.yml:/dsh-home/luoyu.local.patch.yml
       # Live plugin code from this checkout: run `npm run build` on the host,
       # then `docker compose ... restart dsh` to load it without rebuilding.
       - ../../lib:/opt/dsh-luoyu/lib:ro

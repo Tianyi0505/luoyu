@@ -73,17 +73,10 @@ fi
 args=(--profile web
       --host "$BIND_HOST" --port "$INTERNAL_PORT" --no-open
       --public-url "http://localhost:${LUOYU_PORT:-3090}")
-# Launcher flags that are not web-app flags must come before the first
-# app-only one: after `--host`, dsh passes the rest of the line to the app.
-# (--patch is a launcher flag; keep it ahead of the app flags below.)
-patch_args=()
-if [ -f /dsh-home/luoyu.local.patch.yml ]; then
-  patch_args=(--patch /dsh-home/luoyu.local.patch.yml)
-fi
 for authority in "localhost:${LUOYU_PORT:-3090}" "127.0.0.1:${LUOYU_PORT:-3090}" ${DSH_EXTRA_TRUSTED_HOSTS:-}; do
   args+=(--trusted-host "$authority")
 done
 
 log "workspace=${WORKSPACE} home=${DSH_HOME} ui=http://localhost:${LUOYU_PORT:-3090} (container ${BIND_HOST}:${INTERNAL_PORT})"
 log "the browser-trust login URL (with ?token=…) is printed below and in \`docker compose logs dsh\`"
-exec dsh "${patch_args[@]}" "${args[@]}"
+exec dsh "${args[@]}"

@@ -8,7 +8,7 @@
 localhost:3090  ──(端口发布 3090:3080)──►  luoyu-dsh   dsh --profile web（绑容器自己的 IP）
 localhost:6099  ──(端口发布 6099:6099)──►  luoyu-napcat  NapCat + 官方 Linux QQ（镜像自带）
 
-./workspace (luoyu-memory 仓库)   ──►  /workspace          ← 挂在 dsh 里（人设/记忆）
+D://tools//luoyu-memory (仓库)   ──►  /workspace          ← 挂在 dsh 里（人设/记忆）
 named volume luoyu-dsh-home       ──►  /dsh-home           ← dsh 的会话、状态
 ./data/napcat-docker/config       ──►  /app/napcat/config  ← 挂在 napcat 里（OneBot 配置）
 ./data/napcat-docker/qq           ──►  /app/.config/QQ     ← QQ 登录态（重建容器不掉线）
@@ -56,7 +56,7 @@ docker compose -f deploy/docker/docker-compose.yml down -v       # 连 dsh-home 
 | --- | --- |
 | `deploy/docker/.env` | 宿主端口、`DEEPSEEK_API_KEY`、`NAPCAT_WEBUI_TOKEN`（由 `.env.example` 复制，已 gitignore） |
 | `deploy/docker/luoyu.patch.yml` | 插件配置（workspace、外接 NapCat 地址等），挂成 `$DSH_HOME/cordis.patch.yml` |
-| `deploy/docker/luoyu.local.patch.yml` | **令牌等机密**（OneBot accessToken），同样挂进容器但**不进 git** |
+| `deploy/docker/.env` 的 `NAPCAT_ACCESS_TOKEN` | OneBot 令牌，插件在启动时经 `!!js process.env…` 读取；与 napcat 的 `onebot11.json` 同值 |
 | `deploy/docker/settings.yaml` | 默认模型种子，只在首次启动复制进 `luoyu-dsh-home` 卷 |
 | `data/napcat-docker/config/onebot11.json` | NapCat 的 OneBot 网络配置（WS/HTTP 服务端 + 令牌），与上面同一个令牌 |
 
@@ -69,14 +69,13 @@ docker compose -f deploy/docker/docker-compose.yml down -v       # 连 dsh-home 
 
 ## 工作区（luoyu-memory）
 
-宿主机克隆一次即可，容器只往里写文件，不碰 `.git`：
+工作区在宿主机 `D://tools//luoyu-memory`（即 `git@github.com:Tianyi0505/luoyu-memory.git`），
+由 `.env` 的 `LUOYU_WORKSPACE_HOST` 指定；容器只往里写文件，不碰 `.git`。要换目录，
+改 `.env` 后 `docker compose ... up -d` 重建即可。
 
-```bash
-git clone git@github.com:Tianyi0505/luoyu-memory.git workspace
-```
-
-首次启动后插件会补齐 `AGENTS.md`、`PERSONA.md`、`memory/*.md`（已存在的不覆盖）。
-把记忆推回仓库：在宿主机 `workspace/` 里 `git add -A && git commit && git push`。
+首次启动后插件会补齐 `AGENTS.md`（人设与规则都在这一个文件里）和 `memory/*.md`
+（已存在的不覆盖）。把记忆推回仓库：在 `D://tools//luoyu-memory` 里
+`git add -A && git commit && git push`。
 容器里也有 `git`，但默认没挂 SSH 私钥；要让 Agent 自己推，给 dsh 服务加一行
 `- ${HOME}/.ssh:/root/.ssh:ro`（Windows 下换成具体路径，并确认私钥权限 600）。
 
@@ -102,7 +101,7 @@ docker exec luoyu-napcat cat /app/napcat/config/webui.json       # WebUI 令牌
 
 - `http://localhost:3090/` 返回 401：正常，未带一次性登录令牌。完整地址在 dsh 日志里。
 - 插件一直 `OneBot offline`：NapCat 还没登录（看 6099 WebUI），或两边令牌不一致
-  （`luoyu.local.patch.yml` 的 `accessToken` vs `data/napcat-docker/config/onebot11.json`）。
+  （`.env` 的 `NAPCAT_ACCESS_TOKEN` vs `data/napcat-docker/config/onebot11.json`）。
 - NapCat 起不来 / QQ 掉线重连：删掉 `data/napcat-docker/qq` 重新扫码（登录态作废）。
 - 模型报未授权：`DEEPSEEK_API_KEY` 没进容器，检查 `deploy/docker/.env`。
 
@@ -113,7 +112,7 @@ docker exec luoyu-napcat cat /app/napcat/config/webui.json       # WebUI 令牌
 | 端口发布 3090:3080 直达 dsh（无 socat，dsh 绑容器 IP） | `GET /` 401 → 带 `?token=` 303 → cookie 后 200 |
 | dsh + napcat 同一 compose 网络 | `napcat` 在 dsh 容器内解析为 172.22.0.2 |
 | 插件外接配置 | dump-config 显示 `napcatMode: external`、`wsUrl: ws://napcat:3001` |
-| 令牌注入 | `--patch luoyu.local.patch.yml` 后 `accessToken` 出现在组合配置（git 里没有它） |
+| 令牌注入 | `accessToken` 经环境变量进入组合配置（git 里没有它） |
 | NapCat v4.18.41 | 镜像自带 QQ，WebUI 6099 用 `WEBUI_TOKEN` 登录，扫码页正常 |
 | 工作区数据卷 | 脚手架文件落在宿主机 `workspace/` 并已推送 `luoyu-memory` |
 | 待办 | NapCat 扫码登录（唯一需要人操作的一步） |

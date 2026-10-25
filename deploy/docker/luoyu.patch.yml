@@ -18,6 +18,10 @@
     napcatMode: external
     wsUrl: ws://napcat:3001
     httpUrl: http://napcat:3000
+    # Resolved from the environment at boot (compose passes it from .env).
+    # NOTE: patch layers replace a row's config instead of merging, so every
+    # key this deployment needs stays in THIS file.
+    accessToken: !!js (process.env.NAPCAT_ACCESS_TOKEN || '')
     autoStart: false
     privateReply: true
     groupReply: balanced
