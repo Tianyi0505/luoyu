@@ -474,11 +474,23 @@ test('batches passive group messages before starting a DSH turn', async () => {
     parts.bridge.accept(passive(402, 'second passive message'))
     await until(() => parts.controller.agents.get('qq-group-782795932')?.sent.length === 1)
     const prompt = parts.controller.agents.get('qq-group-782795932')?.sent[0]?.content[0]?.text ?? ''
-    assert.match(prompt, /Ada: first passive message/)
-    assert.doesNotMatch(prompt, /QQ|10001|782795932/)
+    assert.match(prompt, /\[group chat 782795932 ·/)
+    assert.match(prompt, /Ada \(QQ 10001\): first passive message/)
     assert.match(prompt, /second passive message/)
+    assert.match(prompt, /memory\/people\/10001\.md/)
     assert.match(prompt, /Decide whether you have something relevant and useful to add/)
     assert.match(prompt, /"should_reply": boolean, "reply": string/)
+    assert.equal(parts.store.current.chats['group:782795932']?.groupContextSent, true)
+
+    const agent = parts.controller.agents.get('qq-group-782795932')
+    assert.ok(agent !== undefined)
+    answer(parts.ctx, agent.session, '{"should_reply":false,"reply":""}')
+    await new Promise(resolve => setTimeout(resolve, 10))
+    parts.bridge.accept(groupEvent({ message_id: 403 }))
+    await until(() => agent.sent.length === 2)
+    const laterPrompt = agent.sent[1]?.content[0]?.text ?? ''
+    assert.doesNotMatch(laterPrompt, /782795932/)
+    assert.match(laterPrompt, /Ada \(QQ 10001\):/)
   } finally {
     await parts.close()
   }
@@ -581,6 +593,63 @@ test('forwards only the reply field when DSH returns should_reply true', async (
     parts.ctx.emit(agent.session, turnEndEvent(1))
     await until(() => parts.client.groups.length === 1)
     assert.deepEqual(parts.client.groups[0]?.message, [{ type: 'text', data: { text: '有用的群聊回复' } }])
+  } finally {
+    await parts.close()
+  }
+})
+
+test('sends a staged sticker only when the passive group decision permits a reply', async () => {
+  const parts = await setup()
+  const passive = (messageId: number, text: string): MessageEvent => groupEvent({
+    message_id: messageId,
+    message: [{ type: 'text', data: { text } }],
+  })
+  const sticker: MessageSegment = {
+    type: 'mface',
+    data: { emoji_id: 'emoji-1', emoji_package_id: 17, key: 'key-1', summary: '开心猫' },
+  }
+  try {
+    parts.bridge.accept(passive(414, 'first message'))
+    parts.bridge.accept(passive(415, 'second message'))
+    await until(() => parts.controller.agents.get('qq-group-782795932')?.sent.length === 1)
+    const agent = parts.controller.agents.get('qq-group-782795932')
+    assert.ok(agent !== undefined)
+    assert.equal(parts.bridge.queueSticker(agent.session.id, sticker), true)
+    parts.ctx.emit(agent.session, turnStartEvent(1))
+    parts.ctx.emit(agent.session, assistantEvent(1, '{"should_reply":false,"reply":""}'))
+    parts.ctx.emit(agent.session, turnEndEvent(1))
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.equal(parts.client.groups.length, 0)
+  } finally {
+    await parts.close()
+  }
+})
+
+test('sends a staged sticker with an approved passive group reply', async () => {
+  const parts = await setup()
+  const passive = (messageId: number, text: string): MessageEvent => groupEvent({
+    message_id: messageId,
+    message: [{ type: 'text', data: { text } }],
+  })
+  const sticker: MessageSegment = {
+    type: 'mface',
+    data: { emoji_id: 'emoji-1', emoji_package_id: 17, key: 'key-1', summary: '开心猫' },
+  }
+  try {
+    parts.bridge.accept(passive(416, 'first message'))
+    parts.bridge.accept(passive(417, 'second message'))
+    await until(() => parts.controller.agents.get('qq-group-782795932')?.sent.length === 1)
+    const agent = parts.controller.agents.get('qq-group-782795932')
+    assert.ok(agent !== undefined)
+    assert.equal(parts.bridge.queueSticker(agent.session.id, sticker), true)
+    parts.ctx.emit(agent.session, turnStartEvent(1))
+    parts.ctx.emit(agent.session, assistantEvent(1, '{"should_reply":true,"reply":"有用的群聊回复"}'))
+    parts.ctx.emit(agent.session, turnEndEvent(1))
+    await until(() => parts.client.groups.length === 2)
+    assert.deepEqual(parts.client.groups.map(item => item.message), [
+      [sticker],
+      [{ type: 'text', data: { text: '有用的群聊回复' } }],
+    ])
   } finally {
     await parts.close()
   }

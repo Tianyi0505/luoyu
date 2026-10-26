@@ -120,7 +120,7 @@ export function parseGroupReplyDecision(text: string): { kind: 'reply'; text: st
     if (parsed === null || typeof parsed !== 'object') return { kind: 'invalid' }
     const decision = parsed as { should_reply?: unknown; reply?: unknown }
     if (typeof decision.should_reply !== 'boolean' || typeof decision.reply !== 'string') return { kind: 'invalid' }
-    if (!decision.should_reply || decision.reply.trim().length === 0) return { kind: 'silent' }
+    if (!decision.should_reply) return { kind: 'silent' }
     return { kind: 'reply', text: decision.reply.trim() }
   } catch {
     return { kind: 'invalid' }
@@ -144,6 +144,12 @@ export function splitReply(text: string, limit: number): string[] {
   return parts
 }
 
+/** Turn a display name into a safe, stable private-memory filename stem. */
+function privateMemoryKey(name: string): string {
+  const key = name.normalize('NFKC').replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 48)
+  return key.length > 0 ? key : 'private-contact'
+}
+
 /**
  * Build the text of one prompt.
  *
@@ -153,16 +159,26 @@ export function splitReply(text: string, limit: number): string[] {
  * @param job - the accepted message.
  * @param timeZone - the configured time zone.
  * @param receivedAt - the receive instant.
+ * @param includeGroupId - whether this is the first message in the group session.
  * @returns the prompt text.
  */
-export function buildPrompt(job: InboundJob, timeZone: string, receivedAt: number): string {
-  const where = job.kind === 'group' ? 'group chat' : `private chat with ${job.title}`
+export function buildPrompt(job: InboundJob, timeZone: string, receivedAt: number, includeGroupId = false): string {
+  const privateTitle = job.kind === 'private' && job.title === job.senderId ? '对方' : job.title
+  const where = job.kind === 'group'
+    ? `group chat${includeGroupId ? ` ${job.targetId}` : ''}`
+    : `private chat with ${privateTitle}`
   const header = `[${where} · ${formatTime(receivedAt, timeZone)} ${timeZone}]`
-  const body = `${job.senderName}: ${job.text}`
+  const senderName = job.kind === 'private' && job.senderName === job.senderId ? '对方' : job.senderName
+  const sender = job.kind === 'group' ? `${senderName} (QQ ${job.senderId})` : senderName
+  const body = `${sender}: ${job.text}`
+  const personMemory = job.kind === 'group'
+    ? `memory/people/${job.senderId}.md`
+    : `memory/people/${privateMemoryKey(senderName)}.md`
+  const memoryGuidance = `\n[Relationship memory: Keep separate 0–100 affinity scores for people and groups in their memory documents (start at 20; levels 0–19 stranger, 20–39 new acquaintance, 40–59 familiar, 60–79 close, 80–100 very close). Read/update ${personMemory}; for a group, use its group memory document identified by the group number in this session's first message. Change scores only for meaningful interactions, by at most 3 points per conversation. Never treat a score as consent or disclose it.]`
   const groupDecision = job.kind === 'group' && !job.directlyAddressed
     ? '\nThese are recent group messages not directed at you. Decide whether you have something relevant and useful to add. Return only a JSON object with this schema: {"should_reply": boolean, "reply": string}. If you should stay silent, set should_reply to false and reply to an empty string. If you should reply, set should_reply to true and put only the message to send in reply. Do not wrap the JSON in Markdown.'
     : ''
-  return `${header}\n${body}${groupDecision}`
+  return `${header}\n${body}${memoryGuidance}${groupDecision}`
 }
 
 /**
@@ -183,6 +199,7 @@ export class ChatBridge {
   private readonly groupRate = new GroupReplyGate()
   private readonly passiveGroupMessages = new Map<string, PendingGroupMessage[]>()
   private readonly sentGroupMessageIds = new Set<string>()
+  private readonly activeStickerTurns = new Map<string, { job: InboundJob; segments: MessageSegment[] }>()
   private closed = false
 
   constructor(
@@ -208,6 +225,14 @@ export class ChatBridge {
       },
       { global: true },
     )
+  }
+
+  /** Queue a sticker for the active turn; it is sent only after that turn chooses to reply. */
+  queueSticker(sessionId: string, segment: MessageSegment): boolean {
+    const active = this.activeStickerTurns.get(sessionId)
+    if (active === undefined || active.segments.length >= 5) return false
+    active.segments.push(segment)
+    return true
   }
 
   /** Stop accepting messages and wait for the running turns. */
@@ -346,9 +371,7 @@ export class ChatBridge {
       this.passiveGroupMessages.delete(key)
       if (pending.length > 0) {
         job.text = [
-          ...pending.map(({ job: message }) => message.senderId === job.senderId
-            ? message.text
-            : `${message.senderName}: ${message.text}`),
+          ...pending.map(({ job: message }) => `${message.senderName} (QQ ${message.senderId}): ${message.text}`),
           job.text,
         ].join('\n')
         // Do not quote a stale message when the reply is based on a batch.
@@ -370,7 +393,11 @@ export class ChatBridge {
       if (agent === undefined || this.closed) return
 
       this.buffers.delete(sessionId)
-      const prompt = buildPrompt(job, this.options.timeZone, receivedAt)
+      const chatRecord = this.store.current.chats[job.key]
+      const includeGroupId = job.kind === 'group' && chatRecord?.groupContextSent !== true
+      const prompt = buildPrompt(job, this.options.timeZone, receivedAt, includeGroupId)
+      const stickerTurn = { job, segments: [] as MessageSegment[] }
+      this.activeStickerTurns.set(sessionId, stickerTurn)
       const settled = this.waitForTurn(sessionId)
       agent.followup({
         id: randomUUID(),
@@ -378,18 +405,22 @@ export class ChatBridge {
         content: [{ type: 'text', text: prompt }],
         source: { kind: 'user', rpcId: `dsh-luoyu:${job.messageId || randomUUID()}` },
       })
+      if (includeGroupId && chatRecord !== undefined) {
+        recordChat(this.store.current, job.key, { ...chatRecord, groupContextSent: true })
+        await this.store.flush()
+      }
       const reason = await settled
       if (reason !== 'completed') {
         this.logger.warn(`dsh-luoyu: turn of ${job.key} ended with "${reason}", no reply is sent`)
         return
       }
       const modelText = this.takeReply(sessionId)
-      if (modelText.length === 0) {
-        this.logger.warn(`dsh-luoyu: turn of ${job.key} produced no text, no reply is sent`)
-        return
-      }
       let text = modelText
       if (job.kind === 'group' && !job.directlyAddressed) {
+        if (modelText.length === 0) {
+          this.logger.warn(`dsh-luoyu: turn of ${job.key} produced no reply decision, no reply is sent`)
+          return
+        }
         const decision = parseGroupReplyDecision(modelText)
         if (decision.kind === 'silent') {
           this.logger.debug(`dsh-luoyu: DSH chose not to reply to passive messages in ${job.key}`)
@@ -401,10 +432,24 @@ export class ChatBridge {
         }
         text = decision.text
       }
-      await this.reply(job, text)
-      if (job.kind === 'group') this.recordGroupReply(job)
-      replied = true
+      if (text.trim().length === 0 && stickerTurn.segments.length === 0) {
+        this.logger.warn(`dsh-luoyu: turn of ${job.key} produced no text or sticker, no reply is sent`)
+        return
+      }
+      if (stickerTurn.segments.length > 0) {
+        await this.sendStickers(job, stickerTurn.segments)
+        replied = true
+        if (job.kind === 'group') this.recordGroupReply(job)
+      }
+      if (text.trim().length > 0) {
+        await this.reply(job, text)
+        replied = true
+        if (job.kind === 'group' && stickerTurn.segments.length === 0) this.recordGroupReply(job)
+      }
     } finally {
+      for (const [sessionId, active] of this.activeStickerTurns) {
+        if (active.job === job) this.activeStickerTurns.delete(sessionId)
+      }
       if (!replied) this.groupRate.release(job.key, job.groupReservationAt)
     }
   }
@@ -560,6 +605,19 @@ export class ChatBridge {
         if (messageId !== undefined) rememberSentMessage(this.sentGroupMessageIds, messageId)
       } else {
         await this.client.sendPrivate(job.targetId, segments)
+      }
+    }
+  }
+
+  /** Send the stickers that the active turn selected for this chat. */
+  private async sendStickers(job: InboundJob, segments: readonly MessageSegment[]): Promise<void> {
+    for (const segment of segments) {
+      if (job.kind === 'group') {
+        const result = await this.client.sendGroup(job.targetId, [segment])
+        const messageId = sentMessageId(result)
+        if (messageId !== undefined) rememberSentMessage(this.sentGroupMessageIds, messageId)
+      } else {
+        await this.client.sendPrivate(job.targetId, [segment])
       }
     }
   }

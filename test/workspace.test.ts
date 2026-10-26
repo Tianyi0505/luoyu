@@ -5,7 +5,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -15,6 +15,8 @@ import {
   MEMORY_DIR,
   MEMORY_FILES,
   PERSONA_HEADING,
+  QQ_SKILL_BODY,
+  QQ_SKILL_PATH,
   instructionBody,
   memoryBody,
   memoryPath,
@@ -46,12 +48,19 @@ async function withTempDir(body: (dir: string) => Promise<void>): Promise<void> 
 test('creates the instruction file and every memory file', async () => {
   await withTempDir(async dir => {
     const result = await scaffoldWorkspace(dir, 'You are Ada.', silent)
-    assert.equal(result.created.length, 1 + MEMORY_FILES.length)
+    assert.equal(result.created.length, 2 + MEMORY_FILES.length)
     assert.deepEqual(result.kept, [])
 
     const instruction = await readFile(join(dir, INSTRUCTION_FILE), 'utf8')
     assert.match(instruction, /长期记忆/)
+    assert.match(instruction, /luoyu-qq skill/)
+    const skill = await readFile(join(dir, QQ_SKILL_PATH), 'utf8')
+    assert.equal(skill, `${QQ_SKILL_BODY}\n`)
+    assert.match(skill, /name: luoyu-qq/)
+    assert.match(skill, /qq_send_sticker/)
     assert.match(personaText(instruction), /You are Ada\./)
+    await access(join(dir, MEMORY_DIR, 'people'))
+    await access(join(dir, MEMORY_DIR, 'groups'))
     for (const name of MEMORY_FILES) {
       const body = await readFile(memoryPath(dir, name), 'utf8')
       assert.ok(body.length > 0)
@@ -67,6 +76,18 @@ test('keeps a file that the operator already edited', async () => {
     const result = await scaffoldWorkspace(dir, 'You are Ada.', silent)
     assert.ok(result.kept.includes(path))
     assert.equal(await readFile(path, 'utf8'), '# Mine\n')
+  })
+})
+
+test('keeps a QQ skill that the operator already edited', async () => {
+  await withTempDir(async dir => {
+    await scaffoldWorkspace(dir, 'You are Ada.', silent)
+    const path = join(dir, QQ_SKILL_PATH)
+    const customSkill = ['---', 'name: luoyu-qq', 'description: Local version', '---', ''].join('\n')
+    await writeFile(path, customSkill, 'utf8')
+    const result = await scaffoldWorkspace(dir, 'You are Ada.', silent)
+    assert.ok(result.kept.includes(path))
+    assert.equal(await readFile(path, 'utf8'), customSkill)
   })
 })
 
@@ -87,7 +108,11 @@ test('the instruction file names every memory file and the per-person layout', (
   const body = instructionBody('You are Ada.')
   for (const name of MEMORY_FILES) assert.ok(body.includes(name), `the instruction file must name ${name}`)
   assert.ok(body.includes(MEMORY_DIR))
-  assert.ok(body.includes('<QQ号>.md'), 'the instruction file must explain one file per person')
+  assert.ok(body.includes('people/<QQ号>.md'), 'the instruction file must explain group-speaker memory files')
+  assert.ok(body.includes('groups/<群号>.md'), 'the instruction file must explain per-group memory files')
+  assert.match(body, /亲密度/)
+  assert.match(body, /0–100/)
+  assert.match(body, /最多调整 3 分/)
   assert.ok(body.includes(PERSONA_HEADING))
   assert.ok(body.includes('你对自己的了解'))
   assert.ok(!body.includes('open-threads'), 'open threads are gone')

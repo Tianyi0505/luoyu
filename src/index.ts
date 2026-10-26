@@ -14,6 +14,7 @@ import type { Config } from './config.ts'
 import { defaultDataDir, resolveConfig } from './config.ts'
 import { ChatBridge } from './bridge.ts'
 import type { PluginContext, PluginLogger } from './context.ts'
+import { installNapCatTools } from './qq-tools.ts'
 import { NapCatSidecar } from './napcat.ts'
 import { OneBotClient } from './onebot/client.ts'
 import type { MessageEvent } from './onebot/types.ts'
@@ -34,7 +35,7 @@ export const name = 'dsh-luoyu'
 export { Config } from './config.ts'
 
 /** Services that the plugin waits for. */
-export const inject = ['sessionController', 'permissionPresets', 'sessions']
+export const inject = ['sessionController', 'permissionPresets', 'sessions', 'tools']
 
 /** Resolve the data directory from the workspace setting. */
 function dataDirOf(config: Config): string {
@@ -128,6 +129,7 @@ export async function apply(ctx: PluginContext, input?: Partial<Config>): Promis
     logger,
   )
 
+  installNapCatTools(ctx, client, bridge)
   bridge.start()
   client.start()
 

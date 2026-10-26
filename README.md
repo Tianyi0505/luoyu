@@ -35,8 +35,9 @@ the session log. Then it sends the answer to the chat.
 | --- | --- |
 | `src/napcat.ts` | Downloads, configures, and starts NapCat. Reads the login state. |
 | `src/onebot/` | OneBot 11 client, message segments, and plain-text rendering. |
-| `src/bridge.ts` | Maps one chat to one session. Converts one turn into one reply. |
-| `src/workspace.ts` | Creates the persona file, the instruction file, and the memory files. |
+| `src/bridge.ts` | Maps one chat to one session. Sends text and sticker replies. |
+| `src/qq-tools.ts` | Provides QQ user, group, and saved-sticker tools. |
+| `src/workspace.ts` | Creates the instruction file, memory files, and QQ skill. |
 | `src/state.ts` | Keeps the chat-to-session map and the seen message identities. |
 | `src/web.ts` | Serves the status page and the login QR code. |
 
@@ -172,8 +173,8 @@ change needs a build before the Harness reads it.
 
 - The plugin supports the OneBot 11 protocol only. It does not support the
   official QQ bot API.
-- The plugin sends text only. It does not send an image, a voice message, or a
-  sticker.
+- The plugin sends text and saved stickers. It does not send normal images or
+  voice messages.
 - Balanced mode joins an active group after two messages in three minutes. It
   waits 90 to 300 seconds between replies. It does not send unsolicited
   messages.

@@ -128,9 +128,24 @@ export interface ConfigEditorService {
   ): Promise<void>
 }
 
+/** The minimal tools registry that the Harness exposes to plugins. */
+export interface ToolRegistryService {
+  register(definition: {
+    name: string
+    description: string
+    parameters: Record<string, unknown>
+    output: {
+      schema: Record<string, unknown>
+      render(args: unknown, value: unknown): Array<{ type: 'text'; text: string }>
+    }
+    execute(args: unknown, exec: { agent?: AgentLike; signal: AbortSignal }): Promise<unknown>
+  }): () => void
+}
+
 /** The Harness context that the plugin receives. */
 export interface PluginContext {
   readonly logger: PluginLogger
+  readonly tools?: ToolRegistryService
   get(name: string): unknown
   inject(names: readonly string[], callback: (context: PluginContext) => void): void
   effect(execute: () => void | (() => void), label?: string): void
