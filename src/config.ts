@@ -54,6 +54,10 @@ export interface Config {
   autoStart: boolean
   /** Permission preset that the plugin applies to every chat session. */
   permissionPreset: string
+  /** Provider for the default model applied to newly created chat sessions. */
+  defaultModelProvider: string
+  /** Model id for the default model applied to newly created chat sessions. */
+  defaultModel: string
   /** IANA time zone that the plugin reports with each prompt. */
   timeZone: string
   /** Largest reply that the plugin sends, in characters. */
@@ -162,6 +166,8 @@ export const Config: Schema<Config> = Schema.object({
   permissionPreset: Schema.string()
     .default('danger-full-access')
     .description('Permission preset that the plugin applies to every chat session.'),
+  defaultModelProvider: Schema.string().default('').description('Provider id for the model used by new QQ chat sessions; empty uses the Harness default.'),
+  defaultModel: Schema.string().default('').description('Model id for the model used by new QQ chat sessions; empty uses the Harness default.'),
   timeZone: Schema.string().default('Asia/Shanghai').description('IANA time zone for each prompt.'),
   maxReplyChars: Schema.natural()
     .default(1500)

@@ -121,6 +121,9 @@ export async function apply(ctx: PluginContext, input?: Partial<Config>): Promis
       privateReply: config.privateReply,
       groupReply: config.groupReply,
       permissionPreset: config.permissionPreset,
+      defaultModel: config.defaultModelProvider.length > 0 && config.defaultModel.length > 0
+        ? { provider: config.defaultModelProvider, model: config.defaultModel }
+        : undefined,
       timeZone: config.timeZone,
       maxReplyChars: config.maxReplyChars,
       turnTimeoutMs: config.turnTimeoutMs,
@@ -155,5 +158,5 @@ export async function apply(ctx: PluginContext, input?: Partial<Config>): Promis
     }
   }, 'dsh-luoyu lifecycle')
 
-  logger.info(`dsh-luoyu: ready, workspace is ${config.workspaceDir}`)
+  logger.info(`dsh-luoyu: ready, workspace is ${config.workspaceDir}; linked-package hot reload is active`)
 }

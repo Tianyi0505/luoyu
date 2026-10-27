@@ -153,8 +153,9 @@ npm run build
 测试使用 Node.js 测试运行器和 Node 22 的原生 TypeScript 支持。测试不需要构建，
 也不会启动 NapCat。
 
-`npm run build` 生成 `lib/index.js`。Harness 加载这个文件。因此，修改源码后必须
-重新构建，Harness 才能读到新代码。
+`npm run build` 生成 `lib/index.js`。开发时运行 `npm run dev` 可持续监听源码并增量构建；
+对通过本地 `link:` 安装、且启用了 Harness HMR 的 DSH profile，输出文件更新会触发插件模块热替换，
+不需要重启 DSH。发布或手动更新插件时，运行 `npm run build` 后再由管理员加载新版本。
 
 ## 限制
 

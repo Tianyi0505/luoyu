@@ -62,6 +62,7 @@
   },
   "scripts": {
     "build": "tsdown",
+    "dev": "tsdown --watch --no-clean",
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   }

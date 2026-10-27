@@ -156,6 +156,16 @@ const PAGE = `<!doctype html>
   </section>
 
   <section>
+    <h2>New chat defaults</h2>
+    <div class="row">
+      <label>Model <select id="model"><option value="">Harness default</option></select></label>
+      <label>Permission preset <input id="permission" value="danger-full-access"></label>
+      <button id="saveDefaults" class="primary">Save defaults</button>
+    </div>
+    <p id="settingsStatus" class="sub"></p>
+  </section>
+
+  <section>
     <h2>Recent output</h2>
     <pre id="log">–</pre>
   </section>
@@ -163,6 +173,40 @@ const PAGE = `<!doctype html>
 <script>
 const $ = (id) => document.getElementById(id)
 let qrStamp = 0
+let settingsLoaded = false
+async function loadDefaults() {
+  if (settingsLoaded) return
+  try {
+    const [settingsResponse, modelsResponse] = await Promise.all([
+      fetch('${ROUTE_PREFIX}/settings', { cache: 'no-store' }),
+      fetch('${ROUTE_PREFIX}/models', { cache: 'no-store' }),
+    ])
+    const settings = await settingsResponse.json()
+    const catalog = await modelsResponse.json()
+    const select = $('model')
+    for (const provider of (catalog.groups || [])) {
+      const group = document.createElement('optgroup'); group.label = provider.name
+      for (const item of provider.models || []) {
+        const option = document.createElement('option')
+        option.value = provider.id + '/' + item.id; option.textContent = item.name + ' (' + provider.name + ')'
+        group.appendChild(option)
+      }
+      select.appendChild(group)
+    }
+    if (settings.defaultModelProvider && settings.defaultModel) select.value = settings.defaultModelProvider + '/' + settings.defaultModel
+    $('permission').value = settings.permissionPreset || 'danger-full-access'
+    settingsLoaded = true
+  } catch (error) { $('settingsStatus').textContent = 'Cannot load defaults: ' + error.message }
+}
+$('saveDefaults').addEventListener('click', async () => {
+  const value = $('model').value
+  const slash = value.indexOf('/')
+  const payload = { permissionPreset: $('permission').value.trim(), defaultModelProvider: slash < 0 ? '' : value.slice(0, slash), defaultModel: slash < 0 ? '' : value.slice(slash + 1) }
+  try {
+    const response = await fetch('${ROUTE_PREFIX}/settings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+    const result = await response.json(); $('settingsStatus').textContent = response.ok ? 'Saved. These defaults apply to new QQ chats.' : result.error
+  } catch (error) { $('settingsStatus').textContent = error.message }
+})
 
 function setPill(el, textEl, cls, text) {
   el.className = 'pill ' + cls
@@ -212,6 +256,7 @@ $('start').addEventListener('click', () => act('start'))
 $('stop').addEventListener('click', () => act('stop'))
 $('refresh').addEventListener('click', () => act('refresh-qrcode'))
 poll()
+loadDefaults()
 setInterval(poll, 3000)
 </script>
 </body>
@@ -262,6 +307,20 @@ export function registerRoutes(
     }),
   )
 
+  disposers.push(webServer.register({
+    kind: 'exact',
+    path: `${ROUTE_PREFIX}/models`,
+    handler: async (_request, response) => {
+      const controller = optionalService<{ modelCatalog?: () => Promise<unknown> }>(ctx, 'sessionController')
+      if (controller?.modelCatalog === undefined) {
+        sendJson(response, 503, { error: 'The Harness model catalog is not available.' })
+        return
+      }
+      try { sendJson(response, 200, await controller.modelCatalog()) }
+      catch (error) { sendJson(response, 503, { error: `Cannot load the Harness model catalog: ${(error as Error).message}` }) }
+    },
+  }))
+
   disposers.push(
     webServer.register({
       kind: 'exact',
@@ -282,6 +341,9 @@ export function registerRoutes(
             persona,
             privateReply: config.privateReply,
             groupReply: normalizeGroupReplyMode(config.groupReply),
+            permissionPreset: config.permissionPreset,
+            defaultModelProvider: config.defaultModelProvider,
+            defaultModel: config.defaultModel,
           })
           return
         }
@@ -300,6 +362,34 @@ export function registerRoutes(
         }
         const input = payload as Record<string, unknown>
         const patch: Partial<Config> = {}
+        if (input.permissionPreset !== undefined) {
+          if (typeof input.permissionPreset !== 'string' || input.permissionPreset.trim().length === 0) {
+            sendJson(response, 400, { error: 'permissionPreset must be a non-empty permission preset name.' })
+            return
+          }
+          patch.permissionPreset = input.permissionPreset.trim()
+        }
+        if (input.defaultModelProvider !== undefined || input.defaultModel !== undefined) {
+          if (typeof input.defaultModelProvider !== 'string' || typeof input.defaultModel !== 'string') {
+            sendJson(response, 400, { error: 'defaultModelProvider and defaultModel must both be strings.' })
+            return
+          }
+          if (input.defaultModelProvider.length === 0 !== (input.defaultModel.length === 0)) {
+            sendJson(response, 400, { error: 'Select both a model provider and model, or leave both empty to use the Harness default.' })
+            return
+          }
+          if (input.defaultModelProvider.length > 0) {
+            const controller = optionalService<{ modelCatalog?: () => Promise<{ groups: Array<{ id: string; models: Array<{ id: string }> }> }> }>(ctx, 'sessionController')
+            const catalog = await controller?.modelCatalog?.().catch(() => undefined)
+            const valid = catalog?.groups.some(group => group.id === input.defaultModelProvider && group.models.some(model => model.id === input.defaultModel))
+            if (!valid) {
+              sendJson(response, 400, { error: 'The selected model is not present in the current Harness model catalog.' })
+              return
+            }
+          }
+          patch.defaultModelProvider = input.defaultModelProvider
+          patch.defaultModel = input.defaultModel
+        }
         if (input.workspaceDir !== undefined) {
           if (typeof input.workspaceDir !== 'string' || input.workspaceDir.trim().length === 0) {
             sendJson(response, 400, { error: 'workspaceDir must be a non-empty path.' })

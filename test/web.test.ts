@@ -147,6 +147,7 @@ test('registers the page and the action routes', () => {
     [...server.routes.keys()].sort(),
     [
       ROUTE_PREFIX,
+      `${ROUTE_PREFIX}/models`,
       `${ROUTE_PREFIX}/qrcode`,
       `${ROUTE_PREFIX}/refresh-qrcode`,
       `${ROUTE_PREFIX}/start`,
@@ -205,6 +206,9 @@ test('returns the current profile settings as JSON', async () => {
       persona: current.persona,
       privateReply: current.privateReply,
       groupReply: current.groupReply,
+      permissionPreset: current.permissionPreset,
+      defaultModelProvider: current.defaultModelProvider,
+      defaultModel: current.defaultModel,
     })
   } finally {
     await rm(workspaceDir, { recursive: true, force: true })
@@ -396,7 +400,7 @@ test('removes every route on dispose', () => {
     silent,
     config,
   )
-  assert.equal(server.routes.size, 7)
+  assert.equal(server.routes.size, 8)
   dispose()
   assert.equal(server.routes.size, 0)
 })

@@ -19,7 +19,9 @@ export default defineConfig({
   target: 'es2024',
   fixedExtension: false,
   dts: false,
-  clean: true,
+  // Keep the entry file in place so DSH's linked-package HMR watcher observes
+  // content changes instead of a clean/remove/recreate cycle.
+  clean: false,
   sourcemap: false,
   deps: {
     // Keep Harness packages external to preserve shared service identity, but

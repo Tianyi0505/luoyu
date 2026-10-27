@@ -13,6 +13,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { dateInZone, millisecondsUntilMidnight, organizeAllChatMemory, recordChatMemory } from './chat-memory.ts'
 import type {
   AgentLike,
   PluginContext,
@@ -41,6 +42,8 @@ export interface BridgeOptions {
   now?: () => number
   /** Permission preset for each chat session. */
   permissionPreset: string
+  /** Optional default model provider and id for newly created sessions. */
+  defaultModel?: { provider: string; model: string }
   /** IANA time zone for each prompt. */
   timeZone: string
   /** Largest reply, in characters. */
@@ -200,6 +203,7 @@ export class ChatBridge {
   private readonly passiveGroupMessages = new Map<string, PendingGroupMessage[]>()
   private readonly sentGroupMessageIds = new Set<string>()
   private readonly activeStickerTurns = new Map<string, { job: InboundJob; segments: MessageSegment[] }>()
+  private memoryTimer: ReturnType<typeof setTimeout> | undefined
   private closed = false
 
   constructor(
@@ -218,6 +222,7 @@ export class ChatBridge {
 
   /** Subscribe to the session event stream. */
   start(): void {
+    this.scheduleMemoryOrganization()
     this.ctx.on(
       'session/event',
       (session: SessionLike, event: SessionEventLike) => {
@@ -225,6 +230,20 @@ export class ChatBridge {
       },
       { global: true },
     )
+  }
+
+  /** Schedule a daily archive run at midnight in the configured time zone. */
+  private scheduleMemoryOrganization(): void {
+    const delay = millisecondsUntilMidnight(Date.now(), this.options.timeZone)
+    this.memoryTimer = setTimeout(() => {
+      const today = dateInZone(Date.now(), this.options.timeZone)
+      void organizeAllChatMemory(this.options.workspaceDir, today)
+        .catch(error => this.logger.warn(`dsh-luoyu: daily memory organization failed: ${(error as Error).message}`))
+        .finally(() => {
+          if (!this.closed) this.scheduleMemoryOrganization()
+        })
+    }, delay)
+    this.memoryTimer.unref?.()
   }
 
   /** Queue a sticker for the active turn; it is sent only after that turn chooses to reply. */
@@ -238,6 +257,7 @@ export class ChatBridge {
   /** Stop accepting messages and wait for the running turns. */
   async close(): Promise<void> {
     this.closed = true
+    if (this.memoryTimer !== undefined) clearTimeout(this.memoryTimer)
     // A turn that is still running would hold its queue until the timeout. The
     // plugin is shutting down, so settle every waiter now.
     for (const [sessionId, waiter] of [...this.waiters]) {
@@ -270,6 +290,16 @@ export class ChatBridge {
       return
     }
     this.queued.set(job.key, depth + 1)
+    void recordChatMemory(this.options.workspaceDir, {
+      kind: job.kind,
+      chatId: job.kind === 'group' ? job.targetId : job.senderId,
+      senderId: job.senderId,
+      senderName: job.senderName,
+      text: job.text,
+      at: this.now(),
+    }, this.options.timeZone).catch(error => {
+      this.logger.warn(`dsh-luoyu: cannot store chat memory for ${job.key}: ${(error as Error).message}`)
+    })
 
     const previous = this.queues.get(job.key) ?? Promise.resolve()
     const next = previous
@@ -493,6 +523,13 @@ export class ChatBridge {
     }
 
     const created = await controller.create({ sessionId: candidate, cwd: this.options.workspaceDir })
+    if (this.options.defaultModel !== undefined && controller.selectModel !== undefined) {
+      try {
+        await controller.selectModel({ sessionId: created.sessionId, ...this.options.defaultModel })
+      } catch (error) {
+        this.logger.warn(`dsh-luoyu: cannot set default model for ${created.sessionId}: ${(error as Error).message}`)
+      }
+    }
     recordChat(state, job.key, {
       sessionId: created.sessionId,
       kind: job.kind,

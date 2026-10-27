@@ -111,6 +111,8 @@ export interface SessionPromptRequest {
 export interface SessionControllerService {
   create(request: SessionCreateRequest): Promise<SessionCreateValue>
   resolveAgent(sessionId: string): Promise<ResolvedAgent | ResolveAgentFailure>
+  selectModel?(request: { sessionId: string; provider: string; model: string; reasoningEffort?: string }): Promise<unknown>
+  modelCatalog?(): Promise<{ default: { provider: string; model: string }; groups: Array<{ id: string; name: string; models: Array<{ id: string; name: string; reasoning?: { defaultEffort?: string } }> }> }>
   prompt(request: SessionPromptRequest, signal?: AbortSignal): Promise<unknown>
 }
 
