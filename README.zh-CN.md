@@ -6,80 +6,34 @@ Luoyu 是一个运行在你自己的 QQ 账号上的个性化机器人。你可�
 回复规则。Luoyu 是
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件。
 
-一个 QQ 聊天对应一个 Harness 会话。群聊保留自己的历史，私聊也保留自己的历史。
-长期记忆是你指定目录中的一组 Markdown 文件。Agent 用自己的文件工具读写这些文件。
-插件不使用数据库。
+每个 QQ 群聊和私聊对应独立的 Harness 会话。记忆以 Markdown 保存在指定工作区，
+各会话共享工作区中的指令和记忆。插件通过 OneBot 11 与 NapCat 通信。
 
-## 工作原理
+## 能力
 
-~~~mermaid
-flowchart LR
-    QQ[QQ 账号] --> NapCat
-    NapCat -->|OneBot 11| Plugin[插件]
-    Plugin --> Session[每个聊天一个 Harness 会话]
-    Session --> Memory[工作区中的 Markdown 记忆]
-    Session --> Plugin
-    Plugin -->|OneBot 11| NapCat
-    NapCat --> QQ
-~~~
+- 群聊与私聊分别维护会话和记忆目录。
+- 每日整理聊天上下文，保留近 15 天记录，并以有界长期记忆归纳较早内容。
+- 群聊内容可补充参与成员的个人记忆；私聊内容仅保存在对应个人空间。
+- 新建会话支持配置默认模型与权限。
+- 支持文本和收藏贴图回复、QQ 联系人及群信息工具、状态页与登录二维码。
 
-插件启动 NapCat。NapCat 加载官方 QQ 客户端，并使用 OneBot 11 协议。插件通过
-WebSocket 接收事件，通过 HTTP 发送动作。
+## 界面
 
-插件把一条 QQ 消息转换为一个会话回合。它从会话日志中读取回答，然后把回答发回
-聊天。
+设置页提供人设、工作区和 NapCat 管理。Luoyu 状态页提供登录状态和二维码，
+地址为 `http://127.0.0.1:3080/luoyu`。配置按当前 profile 保存；工作区变更会建立独立的新会话。
 
-| 模块 | 作用 |
-| --- | --- |
-| `src/napcat.ts` | 下载、配置并启动 NapCat，读取登录状态。 |
-| `src/onebot/` | OneBot 11 客户端、消息段和纯文本渲染。 |
-| `src/bridge.ts` | 把一个聊天映射到一个会话，并发送文字和贴图回复。 |
-| `src/qq-tools.ts` | 提供 QQ 用户、群和收藏贴图工具。 |
-| `src/workspace.ts` | 创建指令文件、记忆文件和 QQ skill。 |
-| `src/state.ts` | 保存聊天到会话的映射，以及已处理消息的标识。 |
-| `src/web.ts` | 提供状态页和登录二维码。 |
-
-## 安装
-
-在 Harness 配置中安装插件：
-
-~~~bash
-dsh plugin --profile web add dsh-luoyu
-~~~
-
-启动 Harness。打开 **设置 → Luoyu**，设置工作区和人设。你也可以在这里管理
-NapCat。
-
-Luoyu 区域显示登录状态。点击 **启动 NapCat**。插件会下载并启动 NapCat。用手机
-QQ 扫描二维码。登录完成后，插件连接 NapCat。
-
-状态页位于 `http://127.0.0.1:3080/luoyu`。设置区域会把每次更改保存到当前配置。
-如果你更改工作区，每个 QQ 聊天都会启动新的 DSH 会话。现有会话仍保留在 DSH 中。
-
-## Docker
-
-`deploy/docker/` 里有一份把插件和 Harness 一起跑起来的镜像。工作区是宿主机目录
-（`luoyu-memory` 仓库）通过数据卷挂进去的，Harness UI 发布在 3090 端口：
-
-~~~bash
-git clone git@github.com:Tianyi0505/luoyu-memory.git workspace
-docker compose -f deploy/docker/docker-compose.yml up -d --build
-~~~
-
-打开 `http://localhost:3090/luoyu` 扫码登录。细节见
-[deploy/docker/README.md](deploy/docker/README.md)。
+Docker 部署配置位于 [`deploy/docker/`](deploy/docker/)，Web 界面端口为 3090。
 
 ## 环境要求
 
 - DeepSeek Harness 0.2.x。
 - Node.js 22.19 或更高版本。
-- 官方 Linux QQ 客户端：点击“启动 NapCat”时，如果检测不到 QQ，插件会从腾讯官方配置源获取当前架构对应的 `.deb`，并尝试用 `sudo -n` 安装；需要交互授权时会回退到桌面 `pkexec`。这要求 Debian/Ubuntu 系统具备 `apt-get`，且 sudo 免密或桌面授权可用。若安装条件不满足，状态页会显示原因并提供手动安装指引。
-- 显示服务器。QQ 客户端是 Electron 应用。如果主机没有桌面，请安装 Xvfb，并用
-  `xvfb-run` 启动 Harness。
+- Linux QQ 客户端运行环境：Debian/Ubuntu、`apt-get`，以及免密 sudo 或桌面 `pkexec` 授权。
+- 显示服务器：Electron QQ 客户端使用的图形运行环境。
 
 ## 配置
 
-每个字段都有默认值。通常需要修改的是 QQ 号和工作区：
+配置字段均提供默认值，覆盖 QQ 连接、回复策略、权限和记忆工作区：
 
 | 键 | 默认值 | 含义 |
 | --- | --- | --- |
@@ -97,18 +51,16 @@ docker compose -f deploy/docker/docker-compose.yml up -d --build
 | `napcatVersion` | `latest` | NapCat 发布标签。 |
 | `napcatWebuiPort` | `6099` | NapCat Web 界面的端口。 |
 | `napcatWebuiToken` | 空 | NapCat Web 界面的令牌。 |
-| `autoStart` | `true` | 插件启动时启动托管模式下的 NapCat。 |
+| `autoStart` | `true` | 托管模式下的自动启动选项。 |
 | `permissionPreset` | `danger-full-access` | 每个聊天会话的权限预设。 |
 | `timeZone` | `Asia/Shanghai` | 插件在每个提示词中报告的时区。 |
 | `maxReplyChars` | `1500` | 回复的最大字符数。更长的回复会被拆分。 |
 | `turnTimeoutMs` | `600000` | 一个回合的时间限制，单位毫秒。 |
 
-聊天会话请使用 `danger-full-access`。等待审批的会话永远不会回复 QQ 消息，因为
-终端前没有人批准请求。
 
 ## 工作区
 
-插件在首次启动时创建这些文件。它不会覆盖你编辑过的文件。
+工作区文件提供 Harness 指令、人设和分层记忆：
 
 ~~~
 AGENTS.md                  Harness 为每个会话加载的指令
@@ -116,52 +68,19 @@ PERSONA.md                 机器人是谁
 memory/self.md             机器人对自己的了解
 memory/people.md           每个人一个段落
 memory/episodes.md         以后会用到的带日期事件
-memory/open-threads.md     尚未结束的问题和承诺
+memory/open-threads.md     待跟进的问题和承诺
 ~~~
 
-Harness 从会话的工作目录加载 `AGENTS.md`。每个聊天会话都把 `workspaceDir` 作为
-工作目录。因此，每个会话读取相同的指令和相同的记忆。
-
-Agent 用自己的文件工具搜索记忆。它不会把所有文件都加载到提示词中。这样可以让
-长期记忆保持低成本，也让 Agent 选择重要的内容。
+所有聊天会话共享 `workspaceDir` 中的指令和记忆。Agent 可按需检索记忆文件，保持
+长期记忆聚焦且易于维护。
 
 ## 状态
 
-插件在 `<DSH_HOME>/integrations/dsh-luoyu/state.json` 保存一个状态文件。它包含
-聊天到会话的映射，以及最近 2000 条已处理消息的标识。文件权限为 `0600`。
-
-如果状态文件损坏，插件会把它重命名为 `state.json.corrupt`，然后以空状态启动。
-会话仍保留在磁盘上。新的映射会创建新的会话。
+会话映射和最近 2000 条已处理消息标识保存在
+`<DSH_HOME>/integrations/dsh-luoyu/state.json`，文件权限为 `0600`。
 
 ## 安全
 
-- OneBot 服务只监听 `127.0.0.1`。
-- 插件以 `0600` 权限写入状态文件。
-- 插件不会把令牌写入日志。
-- 人设禁止泄露凭据。
-- 记忆文件包含个人数据。请把工作区放在你控制的主机上。
-
-## 开发
-
-~~~bash
-npm install
-npm run typecheck
-npm test
-npm run build
-~~~
-
-测试使用 Node.js 测试运行器和 Node 22 的原生 TypeScript 支持。测试不需要构建，
-也不会启动 NapCat。
-
-`npm run build` 生成 `lib/index.js`。开发时运行 `npm run dev` 可持续监听源码并增量构建；
-对通过本地 `link:` 安装、且启用了 Harness HMR 的 DSH profile，输出文件更新会触发插件模块热替换，
-不需要重启 DSH。发布或手动更新插件时，运行 `npm run build` 后再由管理员加载新版本。
-
-## 限制
-
-- 插件只支持 OneBot 11 协议，不支持官方 QQ 机器人 API。
-- 插件可发送文本和已收藏的贴图。不发送普通图片或语音。
-- 适度模式会在三分钟内有两条消息的活跃群聊中参与。两条回复之间等待 90 到 300 秒。
-  它不会主动发送消息。
-- 托管模式需要 Linux QQ 客户端和显示服务器。
-- 一个会话只对应一个聊天。活跃聊天的上下文会比安静聊天更早达到上限。
+- OneBot 服务绑定本机地址 `127.0.0.1`。
+- 状态文件使用 `0600` 权限；访问令牌受到日志保护。
+- 人设包含凭据保护要求，记忆保存在用户指定的工作区。
